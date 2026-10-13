@@ -16,7 +16,13 @@ test('inline JavaScript in the frontend parses successfully', () => {
     if (/\bsrc\s*=/.test(attributes)) continue;
     if (/\btype\s*=\s*["'](?:application\/(?:ld\+)?json|importmap|text\/template)["']/i.test(attributes)) continue;
 
-    new vm.Script(source, { filename: 'index.html:inline-script-' + (index + 1) });
+    const filename = 'index.html:inline-script-' + (index + 1);
+    try {
+      new vm.Script(source, { filename });
+    } catch (error) {
+      error.message = filename + ': ' + error.message;
+      throw error;
+    }
     checked += 1;
   }
 
