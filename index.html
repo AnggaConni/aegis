@@ -135,13 +135,76 @@
         .leaflet-control-attribution { font-size: 10px; background: rgba(255,255,255,0.88) !important; padding: 2px 5px !important; }
 
         @media (max-width: 800px) {
-            #view-radar { overflow-y: auto !important; overflow-x: hidden !important; }
-            #radar-workspace { height: auto; min-height: 100%; }
-            #view-radar { height: calc(100vh - 60px - 54px - env(safe-area-inset-bottom)); height: calc(100dvh - 60px - 54px - env(safe-area-inset-bottom)); padding-bottom: 8px; }
+            body > main { min-height: 0; overflow: hidden; }
+            #mobile-detail-host { display: block; flex: 0 0 auto; padding: 5px 8px 0; background: #f8fafc; }
+            #view-radar { height: 100%; min-height: 0; overflow-y: auto !important; overflow-x: hidden !important; padding-bottom: 8px; }
             #radar-workspace { height: auto; min-height: 0; }
             #radar-top-layout { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(220px, 38dvh) auto; flex: none; padding: 7px; gap: 7px; }
             #map-panel { height: clamp(220px, 38dvh, 310px); min-height: 220px; transition: height .22s ease, min-height .22s ease; }
             #radar-sidebar { max-height: none; overflow: visible; padding: 10px; }
+            #incident-detail-panel {
+                min-height: 0;
+                max-height: none;
+                margin: 0;
+                padding: 7px 8px;
+                gap: 8px;
+                align-items: center;
+                overflow: hidden;
+                border-radius: 11px;
+                box-shadow: 0 1px 5px rgba(15,23,42,.06);
+            }
+            #incident-detail-panel .detail-icon { width: 32px; height: 32px; border-radius: 9px; font-size: 12px; }
+            #incident-detail-panel .detail-content { min-width: 0; overflow: hidden; }
+            #incident-detail-panel .detail-content > div:first-child {
+                display: flex;
+                flex-wrap: nowrap !important;
+                gap: 5px;
+                overflow: hidden;
+                margin-bottom: 2px !important;
+            }
+            #incident-detail-panel #detail-category { flex: 0 0 auto; padding: 2px 5px; font-size: 8px; }
+            #incident-detail-panel #detail-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+            #incident-detail-panel #detail-title {
+                display: -webkit-box;
+                overflow: hidden;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 1;
+                font-size: 12px;
+                line-height: 1.25;
+            }
+            #incident-detail-panel #detail-desc {
+                display: -webkit-box;
+                overflow: hidden;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 1;
+                margin-top: 2px;
+                font-size: 10px;
+                line-height: 1.3;
+            }
+            #incident-detail-panel .detail-content > div:last-child {
+                display: flex;
+                flex-wrap: nowrap;
+                gap: 6px;
+                overflow: hidden;
+                margin-top: 3px;
+                font-size: 9px;
+                line-height: 1.2;
+                white-space: nowrap;
+            }
+            #incident-detail-panel #detail-distance,
+            #incident-detail-panel #detail-time {
+                min-width: 0;
+                max-width: 48%;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            #incident-detail-panel #detail-coordinates { display: none; }
+            #incident-detail-panel .detail-actions { width: auto; flex: 0 0 auto; gap: 4px; padding: 0; }
+            #incident-detail-panel .detail-action-btn { min-height: 29px; padding: 6px 7px; border-radius: 8px; font-size: 10px; }
+            #incident-detail-panel[data-selection-state="empty"] #detail-desc,
+            #incident-detail-panel[data-selection-state="empty"] .detail-content > div:last-child { display: none !important; }
+            #incident-detail-panel[data-selection-state="empty"] .detail-action-btn { min-height: 28px; }
             #bottom-navigation {
                 height: calc(54px + env(safe-area-inset-bottom)) !important;
                 min-height: calc(54px + env(safe-area-inset-bottom));
@@ -308,6 +371,9 @@
         </div>
     </header>
 
+    <!-- Mobile detail strip: the selected-alert panel moves here below the header on narrow screens. -->
+    <div id="mobile-detail-host" aria-label="Selected alert details"></div>
+
     <!-- Main Content Area -->
     <main class="flex-1 relative bg-slate-50">
         
@@ -458,7 +524,7 @@
                     </aside>
                 </div>
 
-                <section id="incident-detail-panel" aria-live="polite" aria-label="Selected incident details">
+                <section id="incident-detail-panel" data-selection-state="empty" aria-live="polite" aria-label="Selected incident details">
                     <div id="detail-icon" class="detail-icon"><i class="fa-solid fa-circle-info"></i></div>
                     <div class="detail-content">
                         <div class="flex flex-wrap items-center gap-2 mb-1">
@@ -837,6 +903,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            syncIncidentDetailPlacement();
             restoreLocalSafetyState();
             initApp();
             updateSavedBadge();
@@ -1490,7 +1557,23 @@
             });
         }
 
+        function syncIncidentDetailPlacement() {
+            const panel = document.getElementById('incident-detail-panel');
+            const mobileHost = document.getElementById('mobile-detail-host');
+            const workspace = document.getElementById('radar-workspace');
+            const topLayout = document.getElementById('radar-top-layout');
+            if (!panel || !mobileHost || !workspace || !topLayout) return;
+
+            const isMobile = window.matchMedia('(max-width: 800px)').matches;
+            if (isMobile && panel.parentElement !== mobileHost) {
+                mobileHost.appendChild(panel);
+            } else if (!isMobile && panel.parentElement !== workspace) {
+                workspace.insertBefore(panel, topLayout.nextSibling);
+            }
+        }
+
         window.addEventListener('resize', () => {
+            syncIncidentDetailPlacement();
             if (window.innerWidth > 800) {
                 const panel = document.getElementById('map-panel');
                 const layout = document.getElementById('radar-top-layout');
@@ -2204,6 +2287,7 @@
         function openIncidentSheet(inc) {
             if (!inc || !Number.isFinite(Number(inc.lat)) || !Number.isFinite(Number(inc.lng))) return;
             currentSelectedIncident = inc;
+            document.getElementById('incident-detail-panel').setAttribute('data-selection-state', 'selected');
             const typeInfo = INCIDENT_TYPES[inc.type] || { color: '', hex: '#64748b', icon: 'fa-circle-info', name: inc.type, source: 'Unknown source' };
             const dist = calculateDistance(userLocation.lat, userLocation.lng, inc.lat, inc.lng).toFixed(1);
 
@@ -2225,6 +2309,7 @@
 
         function openWebIntelDetail(article) {
             currentSelectedIncident = null;
+            document.getElementById('incident-detail-panel').setAttribute('data-selection-state', 'selected');
             document.getElementById('detail-title').textContent = article.title || 'Local news signal';
             document.getElementById('detail-desc').textContent = (article.snippet || 'No summary supplied.') +
                 ' This is a search/media lead, not an independently verified incident. No exact coordinates are asserted.';
@@ -2247,6 +2332,7 @@
 
         function closeSheet() {
             currentSelectedIncident = null;
+            document.getElementById('incident-detail-panel').setAttribute('data-selection-state', 'empty');
             document.getElementById('detail-category').textContent = 'READY';
             setDetailSource('CivilAegis intelligence panel', '');
             document.getElementById('detail-title').textContent = 'Select an alert on the map';
