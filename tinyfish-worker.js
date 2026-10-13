@@ -307,6 +307,285 @@ function extractEventDate(item, title, snippet, nowMs) {
     return null;
 }
 
+function decodeHtmlEntities(value) {
+    return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt|nbsp);/gi, function (_, entity) {
+        const key = entity.toLowerCase();
+        if (key === 'amp') return '&';
+        if (key === 'quot') return '"';
+        if (key === 'apos') return "'";
+        if (key === 'lt') return '<';
+        if (key === 'gt') return '>';
+        if (key === 'nbsp') return ' ';
+        if (key.startsWith('#x')) {
+            const point = parseInt(key.slice(2), 16);
+            return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : '';
+        }
+        if (key.startsWith('#')) {
+            const point = parseInt(key.slice(1), 10);
+            return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : '';
+        }
+        return _;
+    });
+}
+
+function extractAttribute(tag, name) {
+    // Attribute names used here are fixed HTML names, not user-controlled input.
+    const match = tag.match(new RegExp('(?:^|\\\\s)' + name + '\\\\s*=\\\\s*(?:"([^"]*)"|\\x27([^\\x27]*)\\x27|([^\\\\s>]+))', 'i'));
+    return match ? decodeHtmlEntities(match[1] || match[2] || match[3] || '').trim() : '';
+}
+
+function isSafePublicHttpUrl(rawUrl) {
+    let url;
+    try { url = new URL(rawUrl); } catch (_) { return false; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
+    const host = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, '').replace(/\\.$/, '');
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') ||
+        host.endsWith('.internal') || host.endsWith('.test') || host.endsWith('.invalid')) return false;
+
+    const octets = host.split('.');
+    if (octets.length === 4 && octets.every(part => /^\\d{1,3}$/.test(part) && Number(part) <= 255)) {
+        const [a, b] = octets.map(Number);
+        if (a === 0 || a === 10 || a === 127 || a >= 224 ||
+            (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return false;
+    }
+    if (host.includes(':')) {
+        if (host === '::' || host === '::1' || /^f[cd]/i.test(host) || /^fe[89ab]/i.test(host) || host.startsWith('::ffff:')) return false;
+    }
+    return true;
+}
+
+function htmlToReadableText(html) {
+    return decodeHtmlEntities(String(html || '')
+        .replace(/<(script|style|noscript|svg|iframe|template)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi, ' ')
+        .replace(/<!--[\\s\\S]*?-->/g, ' ')
+        .replace(/<[^>]+>/g, ' '))
+        .replace(/\\s+/g, ' ')
+        .trim()
+        .slice(0, 120000);
+}
+
+function extractMetaValue(html, wantedNames) {
+    const wanted = new Set(wantedNames.map(value => value.toLowerCase()));
+    const tags = String(html || '').match(/<meta\\b[^>]*>/gi) || [];
+    for (const tag of tags) {
+        const key = (extractAttribute(tag, 'property') || extractAttribute(tag, 'name') ||
+            extractAttribute(tag, 'itemprop') || extractAttribute(tag, 'http-equiv')).toLowerCase();
+        if (wanted.has(key)) {
+            const value = extractAttribute(tag, 'content');
+            if (value) return value;
+        }
+    }
+    return '';
+}
+
+function collectJsonLdSignals(html) {
+    const scripts = String(html || '').match(/<script\\b[^>]*type\\s*=\\s*["']application\\/ld\\+json["'][^>]*>[\\s\\S]*?<\\/script\\s*>/gi) || [];
+    const objects = [];
+    for (const script of scripts) {
+        const start = script.indexOf('>');
+        const end = script.toLowerCase().lastIndexOf('</script');
+        if (start < 0 || end <= start) continue;
+        const raw = script.slice(start + 1, end).trim().replace(/^<!--|-->$/g, '').trim();
+        try {
+            const parsed = JSON.parse(raw);
+            const visit = value => {
+                if (Array.isArray(value)) {
+                    value.forEach(visit);
+                } else if (value && typeof value === 'object') {
+                    objects.push(value);
+                    if (value['@graph']) visit(value['@graph']);
+                    if (value.mainEntity) visit(value.mainEntity);
+                    if (value.mainEntityOfPage && typeof value.mainEntityOfPage === 'object') visit(value.mainEntityOfPage);
+                }
+            };
+            visit(parsed);
+        } catch (_) {}
+    }
+
+    let publicationRaw = '';
+    let eventRaw = '';
+    for (const object of objects) {
+        const types = (Array.isArray(object['@type']) ? object['@type'] : [object['@type']])
+            .filter(Boolean).map(value => String(value).toLowerCase());
+        if (!publicationRaw) publicationRaw = object.datePublished || object.dateCreated || object.uploadDate || '';
+        if (!eventRaw && types.some(type => /(^|\\/)(event|crimeevent|socialevent|publicevent)$/.test(type))) {
+            eventRaw = object.startDate || object.endDate || '';
+        }
+    }
+    return { publicationRaw: String(publicationRaw || ''), eventRaw: String(eventRaw || '') };
+}
+
+async function fetchPublicHtml(rawUrl) {
+    if (!isSafePublicHttpUrl(rawUrl)) return null;
+    let url = new URL(rawUrl);
+    for (let redirects = 0; redirects <= 3; redirects++) {
+        if (!isSafePublicHttpUrl(url.href)) return null;
+        let response;
+        try {
+            response = await fetch(url.href, {
+                method: 'GET',
+                redirect: 'manual',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2',
+                    'User-Agent': 'CivilAegisSafetyRadar/1.1 (+https://anggaconni.github.io/aegis/)'
+                },
+                signal: AbortSignal.timeout(3000)
+            });
+        } catch (_) {
+            return null;
+        }
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+            const location = response.headers.get('Location');
+            if (!location || redirects === 3) return null;
+            try { url = new URL(location, url); } catch (_) { return null; }
+            continue;
+        }
+        if (!response.ok) return null;
+        const contentType = response.headers.get('Content-Type') || '';
+        const length = Number(response.headers.get('Content-Length') || 0);
+        if (length > 1500000 || (contentType && !/(text\\/html|application\\/xhtml\\+xml)/i.test(contentType))) return null;
+        let html = '';
+        try { html = await response.text(); } catch (_) { return null; }
+        if (!html || html.length > 1800000) return null;
+        return { html: html, url: url.href };
+    }
+    return null;
+}
+
+function extractCandidateOriginalUrls(text, sourceUrl) {
+    const candidates = [];
+    const sourceHost = (() => {
+        try { return new URL(sourceUrl).hostname.toLowerCase().replace(/^www\\./, ''); } catch (_) { return ''; }
+    })();
+    const urls = String(text || '').match(/https?:\\/\\/[^\\s<>"')\\]]+/gi) || [];
+    urls.forEach(raw => {
+        const cleaned = raw.replace(/[.,;:!?]+$/g, '');
+        if (!isSafePublicHttpUrl(cleaned)) return;
+        let host = '';
+        try { host = new URL(cleaned).hostname.toLowerCase().replace(/^www\\./, ''); } catch (_) { return; }
+        if (host === sourceHost) return;
+        if (!candidates.includes(cleaned)) candidates.push(cleaned);
+    });
+    return candidates.slice(0, 2);
+}
+
+function readSourceDateSignals(html, nowMs) {
+    const jsonLd = collectJsonLdSignals(html);
+    const publicationRaw = extractMetaValue(html, [
+        'article:published_time', 'og:published_time', 'datepublished',
+        'pubdate', 'publishdate', 'dc.date.issued', 'dc.date', 'citation_publication_date',
+        'parsely-pub-date', 'sailthru.date'
+    ]) || jsonLd.publicationRaw;
+    const eventRaw = extractMetaValue(html, [
+        'event:start_time', 'event_date', 'incident_date', 'incidentdate', 'dateofincident',
+        'dc.date.event', 'event:startdate'
+    ]) || jsonLd.eventRaw;
+    const readableText = htmlToReadableText(html);
+    const publicationParsed = publicationRaw ? parseDateValue(publicationRaw, nowMs) : null;
+    const explicitEventParsed = eventRaw ? parseDateValue(eventRaw, nowMs) : null;
+    const eventParsed = explicitEventParsed || extractEventDate({}, '', readableText, nowMs);
+    return {
+        publicationRaw: publicationRaw || null,
+        publicationParsed: publicationParsed,
+        eventParsed: eventParsed,
+        readableText: readableText
+    };
+}
+
+async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, diagnostics) {
+    const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
+    let publicationParsed = parseDateValue(publicationRaw, nowMs);
+    let eventParsed = extractEventDate(item, title, snippet, nowMs);
+    let enriched = false;
+    let checked = false;
+    if (eventParsed && publicationParsed && ['absolute-date', 'absolute-timestamp'].includes(publicationParsed.precision)) {
+        return { publicationRaw: publicationRaw, publicationParsed: publicationParsed, eventParsed: eventParsed, enriched: false, checked: false };
+    }
+
+    const originalUrls = extractCandidateOriginalUrls(snippet, item.url || item.link || item.href || '');
+    let candidates = [item.url || item.link || item.href || '', ...originalUrls].filter(Boolean);
+    try {
+        const sourceHost = new URL(candidates[0]).hostname.toLowerCase().replace(/^www\\./, '');
+        if (/(facebook\\.com|instagram\\.com|youtube\\.com|youtu\\.be|tiktok\\.com)$/.test(sourceHost) && originalUrls.length) {
+            candidates = [...originalUrls, candidates[0]];
+        }
+    } catch (_) {}
+    candidates = Array.from(new Set(candidates)).slice(0, 2);
+
+    for (const candidate of candidates) {
+        if (budget.remaining <= 0) break;
+        budget.remaining -= 1;
+        budget.attempts += 1;
+        diagnostics.originalSourceFetchCount += 1;
+        checked = true;
+        const page = await fetchPublicHtml(candidate);
+        if (!page) {
+            diagnostics.originalSourceFetchFailedCount += 1;
+            continue;
+        }
+        diagnostics.originalSourcePageReadCount += 1;
+        const signals = readSourceDateSignals(page.html, nowMs);
+        if (!publicationParsed || ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(publicationParsed.precision)) {
+            if (signals.publicationParsed && ['absolute-date', 'absolute-timestamp'].includes(signals.publicationParsed.precision)) {
+                publicationParsed = signals.publicationParsed;
+                enriched = true;
+            } else if (!publicationParsed && signals.publicationParsed) {
+                publicationParsed = signals.publicationParsed;
+                enriched = true;
+            }
+        }
+        if (!eventParsed && signals.eventParsed) {
+            eventParsed = { ...signals.eventParsed, status: 'event-date-extracted-from-original-source' };
+            enriched = true;
+        }
+        if (publicationParsed && eventParsed && ['absolute-date', 'absolute-timestamp'].includes(publicationParsed.precision)) break;
+    }
+
+    if (enriched) diagnostics.originalSourceDateEnrichedCount += 1;
+    return {
+        publicationRaw: publicationParsed && publicationParsed.raw !== undefined ? publicationParsed.raw : publicationRaw,
+        publicationParsed: publicationParsed,
+        eventParsed: eventParsed,
+        enriched: enriched,
+        checked: checked
+    };
+}
+
+function classifyIncident(title, snippet) {
+    const text = normalize(String(title || '') + ' ' + String(snippet || ''));
+    const hasExplosion = /\\b(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)\\b/.test(text);
+    const hasSexualViolence = /\\b(rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan)\\b/.test(text);
+    const hasUnrest = /\\b(riot|unrest|mob violence|clash|clashes|communal violence|protest|protests|demonstration|demonstrations|tawuran|bentrokan|bentrok|ricuh|kerusuhan|unjuk rasa|demonstrasi)\\b/.test(text);
+    const hasFatality = /\\b(murder|homicide|killed|dead after|people dead|fatal|deadly|died after|victim died|death toll|people were killed|run over|struck and killed|pembunuhan|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal)\\b/.test(text);
+    const hasFatalAssault = /\\b(fatal assault|fatal attack|fatal stabbing|fatal shooting|deadly assault|died after (?:an? )?assault|assault incident.*(?:died|fatal|death)|serangan fatal|meninggal setelah dianiaya)\\b/.test(text);
+    const hasTheft = /\\b(pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)\\b/.test(text);
+    const hasFraud = /\\b(scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online)\\b/.test(text);
+    const hasAccident = /\\b(accident|crash|collision|hit and run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun)\\b/.test(text);
+    const hasDisaster = /\\b(flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran)\\b/.test(text);
+
+    let category = 'public_safety';
+    if (hasExplosion) category = 'explosion_or_blast';
+    else if (hasSexualViolence) category = 'sexual_violence';
+    else if (hasUnrest) category = 'unrest';
+    else if (hasFatalAssault || hasFatality) category = 'homicide_or_fatality';
+    else if (hasTheft) category = 'theft';
+    else if (hasFraud) category = 'scam_or_fraud';
+    else if (hasAccident) category = 'road_accident';
+    else if (hasDisaster) category = 'disaster';
+
+    const tags = [];
+    if (hasExplosion) tags.push('explosion_or_blast');
+    if (hasSexualViolence) tags.push('sexual_violence');
+    if (hasUnrest) tags.push('unrest');
+    if (hasFatality || hasFatalAssault) tags.push('fatality');
+    if (hasTheft) tags.push('theft');
+    if (hasFraud) tags.push('scam_or_fraud');
+    if (hasAccident) tags.push('road_accident');
+    if (hasDisaster) tags.push('disaster');
+    return { category: category, incidentTags: Array.from(new Set(tags)) };
+}
+
 function makeAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
     if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
     const days = Math.max(0, ageDays);
@@ -402,7 +681,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v6?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v7?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -437,6 +716,7 @@ export default {
 
         try {
             const gathered = [];
+            const sourceFetchBudget = { remaining: 10, attempts: 0 };
             const rejectedOutOfWindowKeys = new Set();
             const rejectedOutOfWindowFingerprints = new Set();
             let successfulSearches = 0;
@@ -452,7 +732,11 @@ export default {
                 relativePublicationDateCount: 0,
                 eventDateCount: 0,
                 cityMentionCount: 0,
-                nationalContextCount: 0
+                nationalContextCount: 0,
+                originalSourceFetchCount: 0,
+                originalSourceFetchFailedCount: 0,
+                originalSourcePageReadCount: 0,
+                originalSourceDateEnrichedCount: 0
             };
             const nowMs = Date.now();
 
@@ -473,7 +757,7 @@ export default {
                 const rows = extractResults(payload);
                 rawResultCount += rows.length;
 
-                rows.forEach(function (item) {
+                await Promise.all(rows.map(async function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
                     if (!/^https?:\/\//i.test(targetUrl)) {
                         diagnostics.rejectedNoSourceUrlCount += 1;
@@ -494,20 +778,20 @@ export default {
                         diagnostics.duplicateCount += 1;
                         return;
                     }
-                    const combined = (title + ' ' + snippet).toLowerCase();
-                    let category = 'public_safety';
-                    if (/explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak/.test(combined)) category = 'explosion_or_blast';
-                    else if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(combined)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|dead after|people dead|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(combined)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(combined)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(combined)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(combined)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(combined)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(combined)) category = 'disaster';
+                    const classified = classifyIncident(title, snippet);
+                    const category = classified.category;
 
-                    const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
-                    const publicationParsed = parseDateValue(publicationRaw, nowMs);
-                    const eventParsed = extractEventDate(item, title, snippet, nowMs);
+                    const enrichedDates = await enrichOriginalSourceDates(
+                        { ...item, url: targetUrl },
+                        title,
+                        snippet,
+                        nowMs,
+                        sourceFetchBudget,
+                        diagnostics
+                    );
+                    const publicationRaw = enrichedDates.publicationRaw;
+                    const publicationParsed = enrichedDates.publicationParsed;
+                    const eventParsed = enrichedDates.eventParsed;
                     const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / DAY_MS) : null;
                     const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / DAY_MS) : null;
                     const timelineParsed = eventParsed || publicationParsed;
@@ -589,6 +873,9 @@ export default {
                         currentIncidentConfirmed: false,
                         dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
                         category: category,
+                        incidentTags: classified.incidentTags,
+                        dateEnrichmentSource: enrichedDates.enriched ? 'original-source-metadata-or-body' : 'search-result-only',
+                        originalSourceChecked: enrichedDates.checked,
                         eventLocation: explicitLocation ? String(explicitLocation) : null,
                         eventLocationScope: location.scope,
                         eventLocationStatus: location.status,
@@ -616,7 +903,7 @@ export default {
                         return;
                     }
                     gathered.push({ result: result, dedupeKey: dedupeKey, fingerprint: fingerprint, score: score });
-                });
+                }));
             }
 
             const uniqueGathered = gathered.map(entry => entry.result);
@@ -646,8 +933,8 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 5,
-                buildVersion: 'timeline-v5-dated-dedupe',
+                filterVersion: 6,
+                buildVersion: 'timeline-v5.1-source-dates',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults.slice(0, 8),
@@ -655,10 +942,10 @@ export default {
                 longTermResults: longTermResults.slice(0, 8),
                 undatedResults: undatedResults.slice(0, 8),
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event and publication dates are separate. searchPass/searchWindow identify the query pass only, not the incident or publication date. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
+                note: 'Event and publication dates are kept separate. When needed, CivilAegis reads a limited number of public source pages for metadata and incident-date context; date enrichment is best-effort and source text is not independently verified. searchPass/searchWindow identify the query pass only, not the incident or publication date. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 5, buildVersion: 'timeline-v5-dated-dedupe', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 6, buildVersion: 'timeline-v5.1-source-dates', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
