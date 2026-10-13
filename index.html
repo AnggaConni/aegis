@@ -588,6 +588,19 @@
         function updateNetworkIndicator() {
             updateOfflinePlanNote();
             const status = document.getElementById('route-status');
+            if (!navigator.onLine) {
+                ['bmkg', 'usgs', 'gdacs', 'petabencana', 'osm'].forEach(id => {
+                    const node = document.getElementById('status-' + id);
+                    if (node && (node.textContent === 'Waiting' || node.dataset.state === 'error')) {
+                        updateSourceStatus(id, 'Offline · cached only', 'neutral');
+                    }
+                });
+                const tinyfish = document.getElementById('status-tinyfish');
+                if (tinyfish && (tinyfish.textContent === 'Waiting' || tinyfish.dataset.state === 'error')) {
+                    updateSourceStatus('tinyfish', webIntel.length ? 'Offline · cached signals' : 'Offline', 'neutral');
+                }
+                updateSourceStatus('weather', 'Needs connection', 'neutral');
+            }
             if (!navigator.onLine && status) {
                 status.textContent = 'Offline: showing saved route/report data. New alerts and live routing cannot be fetched.';
                 status.style.color = '#92400e';
@@ -967,7 +980,7 @@
                             const reportLat = Number(geometry.coordinates[1]);
                             if (!Number.isFinite(reportLat) || !Number.isFinite(reportLng) || (reportLat === 0 && reportLng === 0)) return;
                             const dist = calculateDistance(lat, lng, reportLat, reportLng);
-                            if (dist > 250) return;
+                            const nearbyToOrigin = dist <= 250;
                             const rawType = String(props.disaster_type || props.disaster || 'disaster').toLowerCase();
                             const normalizedType = rawType === 'flood' ? 'flood'
                                 : rawType === 'earthquake' ? 'earthquake'
@@ -1121,7 +1134,7 @@
             const userIconHtml = '<div class="custom-marker marker-user w-6 h-6"><i class="fa-solid fa-person"></i></div>';
             const userIcon = L.divIcon({ className: 'bg-transparent', html: userIconHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
             userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon, zIndexOffset: 1000 })
-                .bindPopup('Your location')
+                .bindPopup(usingFallbackLocation ? 'GPS unconfirmed · using saved/default planning point' : 'Your current GPS location')
                 .addTo(map);
 
             renderMapMarkers();
