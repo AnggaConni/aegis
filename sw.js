@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'civilaegis-shell-v15';
+const SHELL_CACHE = 'civilaegis-shell-v16';
 const VENDOR_CACHE = 'civilaegis-vendor-v1';
 const APP_SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 const VENDOR_HOSTS = new Set([
