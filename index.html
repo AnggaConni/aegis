@@ -895,20 +895,20 @@
                         const quakeLat = coords[0], quakeLng = coords[1];
                         const dist = calculateDistance(lat, lng, quakeLat, quakeLng);
                         const stamp = quake.DateTime || new Date().toISOString();
-                        if (dist <= 2000) {
-                            addIncidentIfUnique({
-                                id: 'bmkg_' + String(quake.DateTime || quake.Tanggal || 'latest'),
-                                type: 'earthquake',
-                                title: 'BMKG earthquake · M ' + String(quake.Magnitude || '—'),
-                                desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', quake.Potensi || '', quake.Dirasakan ? 'Felt: ' + quake.Dirasakan : ''].filter(Boolean).join(' | '),
-                                lat: quakeLat, lng: quakeLng, dist: dist,
-                                timestamp: stamp, timeText: formatRelativeTime(stamp),
-                                sourceName: 'BMKG Data Terbuka',
-                                sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
-                                confidenceLabel: 'Official bulletin'
-                            });
-                        }
-                        updateSourceStatus('bmkg', dist <= 2000 ? 'Online' : 'Online · no nearby quake', 'ok');
+                        const bmkgReport = {
+                            id: 'bmkg_' + String(quake.DateTime || quake.Tanggal || 'latest'),
+                            type: 'earthquake',
+                            title: 'BMKG earthquake · M ' + String(quake.Magnitude || '—'),
+                            desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', quake.Potensi || '', quake.Dirasakan ? 'Felt: ' + quake.Dirasakan : ''].filter(Boolean).join(' | '),
+                            lat: quakeLat, lng: quakeLng, dist: dist,
+                            timestamp: stamp, timeText: formatRelativeTime(stamp),
+                            sourceName: 'BMKG Data Terbuka',
+                            sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
+                            confidenceLabel: 'Official bulletin'
+                        };
+                        routeHazardCandidates.push(bmkgReport);
+                        if (dist <= 50) addIncidentIfUnique(bmkgReport);
+                        updateSourceStatus('bmkg', dist <= 50 ? 'Online · local bulletin' : 'Online · no local quake', 'ok');
                     } catch (error) {
                         console.warn('BMKG fetch failed:', error);
                         updateSourceStatus('bmkg', 'Unavailable', 'error');
@@ -937,7 +937,7 @@
                                 confidenceLabel: 'Official seismic catalog'
                             };
                             routeHazardCandidates.push(quakeReport);
-                            if (dist > 2000) return;
+                            if (dist > 50) return;
                             const added = addIncidentIfUnique(quakeReport);
                             if (added) nearbyCount++;
                         });
@@ -991,7 +991,7 @@
                                 confidenceLabel: 'Global alert · check official situation updates'
                             };
                             routeHazardCandidates.push(report);
-                            if (dist <= 250 && addIncidentIfUnique(report)) nearbyCount++;
+                            if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount++;
                         });
                         updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' nearby', 'ok');
                     } catch (error) {
@@ -1045,7 +1045,7 @@
                             const reportLat = Number(geometry.coordinates[1]);
                             if (!Number.isFinite(reportLat) || !Number.isFinite(reportLng) || (reportLat === 0 && reportLng === 0)) return;
                             const dist = calculateDistance(lat, lng, reportLat, reportLng);
-                            const nearbyToOrigin = dist <= 250;
+                            const nearbyToOrigin = dist <= 25;
                             const rawType = String(props.disaster_type || props.disaster || 'disaster').toLowerCase();
                             const normalizedType = rawType === 'flood' ? 'flood'
                                 : rawType === 'earthquake' ? 'earthquake'
