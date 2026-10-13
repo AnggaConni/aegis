@@ -124,3 +124,9 @@ test('context-specific advice does not frame historical or structural-risk resul
   assert.match(html, /The source date is unconfirmed\. Check the original report and current local guidance/);
   assert.match(html, /perpetrators are responsible for abuse/);
 });
+
+
+test('specific sexual-violence language takes precedence over broader gender-based context', () => {
+  assert.match(html, /Classify specific sexual-violence reports before the broader GBV category/);
+  assert.match(html, /return 'sexual_violence';[\s\S]*?return 'gender_based_violence';/);
+});
