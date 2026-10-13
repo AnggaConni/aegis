@@ -43,18 +43,24 @@
         
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f8fafc; /* lighter */
-            color: #0f172a; /* textMain */
-            overflow: hidden; /* Prevent body scroll, handle per-view */
+            background-color: #f8fafc;
+            color: #0f172a;
+            overflow: hidden;
         }
         
         #map {
-            height: calc(100vh - 60px - 64px); /* Viewport - Header - Bottom Nav */
+            height: calc(100vh - 60px - 64px);
             width: 100%;
             z-index: 10;
         }
 
-        /* Custom marker styles */
+        /* Keep Leaflet's required map attribution visible and legible. */
+        .leaflet-control-attribution {
+            font-size: 10px;
+            background: rgba(255,255,255,0.88) !important;
+            padding: 2px 5px !important;
+        }
+
         .custom-marker {
             display: flex;
             justify-content: center;
@@ -75,28 +81,21 @@
             box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3);
         }
 
-        /* Bottom Sheet Animation */
         .bottom-sheet {
             transform: translateY(100%);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             z-index: 50;
         }
-        .bottom-sheet.open {
-            transform: translateY(0);
-        }
+        .bottom-sheet.open { transform: translateY(0); }
 
-        /* View transitions */
         .view-section {
             display: none;
             height: calc(100vh - 60px - 64px);
             overflow-y: auto;
             padding-bottom: 20px;
         }
-        .view-section.active {
-            display: block;
-        }
+        .view-section.active { display: block; }
 
-        /* Hide scrollbar for clean UI */
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -188,15 +187,13 @@
             </h2>
             
             <div class="flex gap-2 overflow-x-auto pb-4 mb-2 no-scrollbar">
-                <button onclick="filterFeed('all')" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">All</button>
-                <button onclick="filterFeed('earthquake')" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Earthquakes</button>
-                <button onclick="filterFeed('safezone')" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Safe Zones</button>
-                <button onclick="filterFeed('news')" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Intel Feed</button>
+                <button onclick="filterFeed('all', this)" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">All</button>
+                <button onclick="filterFeed('earthquake', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Earthquakes</button>
+                <button onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Safe Zones</button>
+                <button onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Intel Feed</button>
             </div>
 
-            <div id="feed-container" class="flex flex-col gap-3">
-                <!-- Feed items will be injected here -->
-            </div>
+            <div id="feed-container" class="flex flex-col gap-3"></div>
         </div>
 
         <!-- VIEW 3: SAVED (BOOKMARKS) -->
@@ -211,14 +208,12 @@
             </div>
 
             <div id="saved-container" class="flex flex-col gap-3">
-                <!-- Saved items will be injected here -->
                 <div class="text-center text-slate-400 mt-12">
                     <i class="fa-solid fa-box-open text-5xl mb-4 text-slate-300"></i>
                     <p class="font-medium">No saved reports yet.</p>
                 </div>
             </div>
         </div>
-
     </main>
 
     <!-- Bottom Navigation -->
@@ -245,12 +240,11 @@
         let map = null;
         let userMarker = null;
         let userLocation = { lat: -6.200000, lng: 106.816666 }; // Default Jakarta
-        let incidents = []; // Realtime data array
+        let incidents = [];
         let savedIncidents = JSON.parse(localStorage.getItem('civilAegisSaved')) || [];
         let markersLayer = null;
         let currentSelectedIncident = null;
 
-        // Incident Categories Config (Updated for Real API Data)
         const INCIDENT_TYPES = {
             earthquake: { color: 'marker-earthquake', hex: '#0ea5e9', icon: 'fa-house-crack', name: 'Earthquake', source: 'USGS API' },
             police: { color: 'marker-police', hex: '#3b82f6', icon: 'fa-building-shield', name: 'Police Station', source: 'OSM Overpass' },
@@ -259,25 +253,20 @@
             news: { color: 'marker-news', hex: '#eab308', icon: 'fa-newspaper', name: 'Intel Report', source: 'GDELT Project' }
         };
 
-        // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
             initApp();
             updateSavedBadge();
         });
 
         function initApp() {
-            // Check geolocation
-            if ("geolocation" in navigator) {
+            if ('geolocation' in navigator) {
                 navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        userLocation = {
-                            lat: position.coords.latitude,
-                            lng: position.coords.longitude
-                        };
+                    position => {
+                        userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
                         setupMapAndData();
                     },
-                    (error) => {
-                        console.warn("GPS Denied/Failed, using default location (Jakarta).", error);
+                    error => {
+                        console.warn('GPS denied/failed; using default Jakarta location.', error);
                         setupMapAndData();
                     },
                     { enableHighAccuracy: true, timeout: 10000 }
@@ -288,65 +277,54 @@
         }
 
         async function setupMapAndData() {
-            // Update Loading Screen text
-            document.getElementById('loading-text').innerText = "Fetching real-time intelligence from USGS, OpenStreetMap, and GDELT...";
-            
-            // Wait for real data fetch
+            document.getElementById('loading-text').innerText = 'Fetching real-time intelligence from USGS, OpenStreetMap, and GDELT...';
             await fetchRealData(userLocation.lat, userLocation.lng);
 
-            // Update UI status
             document.getElementById('gps-status').innerHTML = `
                 <span class="relative flex h-2.5 w-2.5">
                   <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
                 </span>
                 <span class="text-green-600 font-semibold text-xs">Live Data Connected</span>
             `;
-            
-            // Init Leaflet
-            initMap();
 
-            // Populate Feeds
+            initMap();
             renderFeed('all');
             renderSaved();
 
-            // Hide Loading
-            setTimeout(() => {
-                document.getElementById('loading-overlay').classList.add('hidden');
-                map.invalidateSize(); // Ensure map renders correctly after loading screen disappears
-            }, 500);
+            document.getElementById('loading-overlay').classList.add('hidden');
+            requestAnimationFrame(() => map.invalidateSize());
         }
 
         // --- REAL API DATA FETCHING ---
         async function fetchRealData(lat, lng) {
             incidents = [];
-            
-            // 1. Fetch Earthquakes (USGS API - M2.5+ Global Past Day)
+
             const fetchUSGS = fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson')
-                .then(res => res.json())
+                .then(res => {
+                    if (!res.ok) throw new Error('USGS request failed: ' + res.status);
+                    return res.json();
+                })
                 .then(data => {
-                    data.features.forEach(feature => {
+                    (data.features || []).forEach(feature => {
                         const eqLat = feature.geometry.coordinates[1];
                         const eqLng = feature.geometry.coordinates[0];
                         const dist = calculateDistance(lat, lng, eqLat, eqLng);
-                        
-                        if (dist <= 2000) { // Keep within 2000km radius for relevance
+                        if (dist <= 2000) {
                             incidents.push({
                                 id: 'usgs_' + feature.id,
                                 type: 'earthquake',
                                 title: `Mag ${feature.properties.mag} Earthquake`,
                                 desc: feature.properties.place,
-                                lat: eqLat,
-                                lng: eqLng,
-                                timeText: new Date(feature.properties.time).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'}),
+                                lat: eqLat, lng: eqLng,
+                                timeText: new Date(feature.properties.time).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
                                 timestamp: new Date(feature.properties.time).toISOString(),
-                                dist: dist
+                                dist
                             });
                         }
                     });
                 })
-                .catch(e => console.error('USGS Fetch Error:', e));
+                .catch(e => console.error('USGS fetch error:', e));
 
-            // 2. Fetch Safe Zones / Infrastructure (Overpass API - 10km Radius)
             const overpassQuery = `
                 [out:json][timeout:15];
                 (
@@ -359,126 +337,105 @@
             const overpassUrl = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(overpassQuery.trim());
             const fetchOverpass = fetch(overpassUrl)
                 .then(res => {
-                    if (!res.ok) throw new Error('API Overpass rate-limited or error');
+                    if (!res.ok) throw new Error('Overpass request failed: ' + res.status);
                     return res.json();
                 })
                 .then(data => {
-                    if (data && data.elements) {
-                        data.elements.forEach(el => {
-                            let type = 'safezone';
-                            let title = 'Emergency Facility';
-                            let desc = 'Nearest safe location/assistance.';
-                            
-                            if(el.tags.amenity === 'police') { title = el.tags.name || 'Police Station'; type = 'police'; desc = 'Law Enforcement & Security Facility'; }
-                            if(el.tags.amenity === 'hospital') { title = el.tags.name || 'Hospital'; type = 'hospital'; desc = 'Medical & Trauma Facility'; }
-                            if(el.tags.amenity === 'fire_station') { title = el.tags.name || 'Fire Dept'; type = 'fire_station'; desc = 'Fire & Rescue Department'; }
-
-                            const dist = calculateDistance(lat, lng, el.lat, el.lon);
-                            incidents.push({
-                                id: 'osm_' + el.id,
-                                type: type,
-                                title: title,
-                                desc: desc,
-                                lat: el.lat,
-                                lng: el.lon,
-                                timeText: 'Static Location',
-                                timestamp: new Date().toISOString(),
-                                dist: dist
-                            });
+                    (data.elements || []).forEach(el => {
+                        let type = 'safezone', title = 'Emergency Facility', desc = 'Nearest safe location/assistance.';
+                        if (el.tags.amenity === 'police') { title = el.tags.name || 'Police Station'; type = 'police'; desc = 'Law Enforcement & Security Facility'; }
+                        if (el.tags.amenity === 'hospital') { title = el.tags.name || 'Hospital'; type = 'hospital'; desc = 'Medical & Trauma Facility'; }
+                        if (el.tags.amenity === 'fire_station') { title = el.tags.name || 'Fire Dept'; type = 'fire_station'; desc = 'Fire & Rescue Department'; }
+                        const dist = calculateDistance(lat, lng, el.lat, el.lon);
+                        incidents.push({
+                            id: 'osm_' + el.id, type, title, desc,
+                            lat: el.lat, lng: el.lon,
+                            timeText: 'Static Location',
+                            timestamp: new Date().toISOString(), dist
                         });
-                    }
+                    });
                 })
-                .catch(e => console.warn('Overpass Fetch Warning:', e.message));
+                .catch(e => console.warn('Overpass fetch warning:', e.message));
 
-            // 3. Fetch GDELT Project (Using Cloudflare Worker to bypass CORS)
-            // ---> GANTI URL DI BAWAH INI DENGAN URL WORKER CLOUDFLARE MILIKMU <---
-            // Contoh URL: 'https://gdelt-proxy.usernamekamu.workers.dev/?query=tone<-2&format=geojson'
-            // Sementara menggunakan public CORS proxy agar preview tidak error saat kamu membangun Worker
-            const workerUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://api.gdeltproject.org/api/v2/geo/geo?query=tone<-2&format=geojson');
-            
+            // Optional GDELT feed via public CORS proxy; a personal Cloudflare Worker is more reliable.
+            const gdeltUrl = 'https://api.gdeltproject.org/api/v2/geo/geo?query=tone%3A-2&format=geojson';
+            const workerUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(gdeltUrl);
             const fetchGDELT = fetch(workerUrl)
-                .then(res => res.json())
-                .then(data => {
-                    if(data.features) {
-                        data.features.forEach((feature, index) => {
-                            const gLat = feature.geometry.coordinates[1];
-                            const gLng = feature.geometry.coordinates[0];
-                            const dist = calculateDistance(lat, lng, gLat, gLng);
-                            
-                            if(dist <= 500) { // Keep within 500km radius
-                                incidents.push({
-                                    id: 'gdelt_' + index,
-                                    type: 'news',
-                                    title: feature.properties.name || 'Intel Report (GDELT)',
-                                    desc: `Recent event detected. Source URL: ${feature.properties.url || 'GDELT Global Database'}`,
-                                    lat: gLat,
-                                    lng: gLng,
-                                    timeText: 'Recent',
-                                    timestamp: new Date().toISOString(),
-                                    dist: dist
-                                });
-                            }
-                        });
-                    }
+                .then(res => {
+                    if (!res.ok) throw new Error('GDELT proxy request failed: ' + res.status);
+                    return res.json();
                 })
-                .catch(e => console.warn('GDELT Fetch Error (Normal if rate limited):', e));
+                .then(data => {
+                    (data.features || []).forEach((feature, index) => {
+                        if (!feature.geometry || !feature.geometry.coordinates) return;
+                        const gLat = feature.geometry.coordinates[1];
+                        const gLng = feature.geometry.coordinates[0];
+                        const dist = calculateDistance(lat, lng, gLat, gLng);
+                        if (dist <= 500) {
+                            incidents.push({
+                                id: 'gdelt_' + index, type: 'news',
+                                title: feature.properties.name || 'Intel Report (GDELT)',
+                                desc: `Recent event detected. Source URL: ${feature.properties.url || 'GDELT Global Database'}`,
+                                lat: gLat, lng: gLng, timeText: 'Recent',
+                                timestamp: new Date().toISOString(), dist
+                            });
+                        }
+                    });
+                })
+                .catch(e => console.warn('GDELT fetch warning (may be rate-limited):', e));
 
-            // Execute all API requests concurrently
             await Promise.allSettled([fetchUSGS, fetchOverpass, fetchGDELT]);
-
-            // Sort all collected data by distance to user
             incidents.sort((a, b) => a.dist - b.dist);
         }
 
         // --- MAP FUNCTIONS ---
         function initMap() {
-            // Create map instance
             map = L.map('map', {
                 zoomControl: false,
-                attributionControl: false
+                attributionControl: true
             }).setView([userLocation.lat, userLocation.lng], 14);
 
-            // Add OpenStreetMap tiles (Free) - Light Theme Default
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            // Standard OpenStreetMap tiles: no CARTO API key is required.
+            // Respect the OpenStreetMap tile usage policy and keep attribution visible.
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                minZoom: 0,
                 maxZoom: 19,
-                subdomains: 'abcd'
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+                crossOrigin: true
             }).addTo(map);
 
-            // Layer for markers
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
             markersLayer = L.layerGroup().addTo(map);
 
-            // Add User Marker
-            const userIconHtml = `<div class="custom-marker marker-user w-6 h-6"><i class="fa-solid fa-person"></i></div>`;
+            const userIconHtml = '<div class="custom-marker marker-user w-6 h-6"><i class="fa-solid fa-person"></i></div>';
             const userIcon = L.divIcon({ className: 'bg-transparent', html: userIconHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
-            userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
+            userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon, zIndexOffset: 1000 })
+                .bindPopup('Your location')
+                .addTo(map);
 
-            // Add Incident Markers
             renderMapMarkers();
         }
 
         function renderMapMarkers() {
+            if (!markersLayer) return;
             markersLayer.clearLayers();
-            
             incidents.forEach(inc => {
                 const typeInfo = INCIDENT_TYPES[inc.type];
-                if(!typeInfo) return; // fail-safe
-
+                if (!typeInfo || !Number.isFinite(inc.lat) || !Number.isFinite(inc.lng)) return;
                 const iconHtml = `<div class="custom-marker ${typeInfo.color} w-8 h-8"><i class="fa-solid ${typeInfo.icon}"></i></div>`;
                 const icon = L.divIcon({ className: 'bg-transparent', html: iconHtml, iconSize: [32, 32], iconAnchor: [16, 16] });
-                
-                const marker = L.marker([inc.lat, inc.lng], { icon: icon })
+                L.marker([inc.lat, inc.lng], { icon })
                     .addTo(markersLayer)
                     .on('click', () => openIncidentSheet(inc));
             });
         }
 
         function centerMapOnUser() {
-            map.setView([userLocation.lat, userLocation.lng], 14, { animate: true });
+            if (map) map.setView([userLocation.lat, userLocation.lng], 14, { animate: true });
         }
 
         // --- UI INTERACTIONS ---
         function switchTab(tabId) {
-            // Update Buttons
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 btn.classList.remove('text-primary');
                 btn.classList.add('text-slate-400');
@@ -487,19 +444,14 @@
             activeBtn.classList.remove('text-slate-400');
             activeBtn.classList.add('text-primary');
 
-            // Update Views
-            document.querySelectorAll('.view-section').forEach(view => {
-                view.classList.remove('active');
-            });
+            document.querySelectorAll('.view-section').forEach(view => view.classList.remove('active'));
             document.getElementById('view-' + tabId).classList.add('active');
 
-            // Specific View Logic
-            if(tabId === 'radar') {
-                setTimeout(() => map.invalidateSize(), 100);
+            if (tabId === 'radar') {
+                setTimeout(() => { if (map) map.invalidateSize(); }, 100);
             } else if (tabId === 'saved') {
                 renderSaved();
             }
-            
             closeSheet();
         }
 
@@ -507,6 +459,7 @@
         function openIncidentSheet(inc) {
             currentSelectedIncident = inc;
             const typeInfo = INCIDENT_TYPES[inc.type];
+            if (!typeInfo) return;
             const dist = calculateDistance(userLocation.lat, userLocation.lng, inc.lat, inc.lng).toFixed(1);
 
             document.getElementById('sheet-title').innerText = inc.title;
@@ -514,16 +467,12 @@
             document.getElementById('sheet-desc').innerText = inc.desc;
             document.getElementById('sheet-time').innerHTML = `<i class="fa-regular fa-clock mr-1"></i> ${inc.timeText}`;
             document.getElementById('sheet-source').innerHTML = `<i class="fa-solid fa-database mr-1"></i> ${typeInfo.source}`;
-            
+
             const iconDiv = document.getElementById('sheet-icon');
             iconDiv.className = `w-10 h-10 rounded-full flex items-center justify-center text-white text-lg shadow-md ${typeInfo.color}`;
             iconDiv.innerHTML = `<i class="fa-solid ${typeInfo.icon}"></i>`;
-
             updateSaveButtonUI();
-
             document.getElementById('incident-sheet').classList.add('open');
-            
-            // Pan map
             map.flyTo([inc.lat, inc.lng], 15, { duration: 0.5 });
         }
 
@@ -533,115 +482,101 @@
         }
 
         function routeToIncident() {
-            alert("External routing feature mapping to safe zones. (In development)");
+            if (!currentSelectedIncident) return;
+            const destination = `${currentSelectedIncident.lat},${currentSelectedIncident.lng}`;
+            window.open('https://www.openstreetmap.org/directions?to=' + encodeURIComponent(destination), '_blank', 'noopener');
         }
 
         // --- FEED & SAVED VIEWS ---
-        function filterFeed(type) {
-            // Update filter buttons
+        function filterFeed(type, button) {
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 btn.classList.remove('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
                 btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
             });
-            event.target.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
-            event.target.classList.add('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
-
+            if (button) {
+                button.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
+                button.classList.add('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
+            }
             renderFeed(type);
         }
 
         function renderFeed(filterType) {
             const container = document.getElementById('feed-container');
             container.innerHTML = '';
-
-            const filtered = filterType === 'all' 
-                ? incidents 
-                : filterType === 'safezone' 
+            const filtered = filterType === 'all'
+                ? incidents
+                : filterType === 'safezone'
                     ? incidents.filter(i => ['police', 'hospital', 'fire_station'].includes(i.type))
                     : incidents.filter(i => i.type === filterType);
 
-            if(filtered.length === 0) {
-                container.innerHTML = `<p class="text-slate-500 text-center text-sm py-8 font-medium">No live intelligence data for this category in your radius.</p>`;
+            if (!filtered.length) {
+                container.innerHTML = '<p class="text-slate-500 text-center text-sm py-8 font-medium">No live intelligence data for this category in your radius.</p>';
                 return;
             }
-
-            filtered.forEach(inc => {
-                container.appendChild(createIncidentCard(inc));
-            });
+            filtered.forEach(inc => container.appendChild(createIncidentCard(inc)));
         }
 
         function renderSaved() {
             const container = document.getElementById('saved-container');
             container.innerHTML = '';
-
-            if(savedIncidents.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center text-slate-400 mt-12">
-                        <i class="fa-solid fa-box-open text-5xl mb-4 text-slate-300"></i>
-                        <p class="font-medium">No saved reports yet.</p>
-                    </div>`;
+            if (!savedIncidents.length) {
+                container.innerHTML = '<div class="text-center text-slate-400 mt-12"><i class="fa-solid fa-box-open text-5xl mb-4 text-slate-300"></i><p class="font-medium">No saved reports yet.</p></div>';
                 return;
             }
-
-            savedIncidents.forEach(inc => {
-                container.appendChild(createIncidentCard(inc, true));
-            });
+            savedIncidents.forEach(inc => container.appendChild(createIncidentCard(inc, true)));
         }
 
         function createIncidentCard(inc, isSavedView = false) {
             const typeInfo = INCIDENT_TYPES[inc.type];
-            if(!typeInfo) return document.createElement('div');
-            
+            if (!typeInfo) return document.createElement('div');
             const dist = calculateDistance(userLocation.lat, userLocation.lng, inc.lat, inc.lng).toFixed(1);
-            
             const div = document.createElement('div');
-            div.className = "bg-white border border-slate-200 rounded-2xl p-4 flex gap-4 active:bg-slate-50 transition-colors shadow-sm cursor-pointer hover:shadow-md";
+            div.className = 'bg-white border border-slate-200 rounded-2xl p-4 flex gap-4 active:bg-slate-50 transition-colors shadow-sm cursor-pointer hover:shadow-md';
             div.onclick = () => {
                 switchTab('radar');
                 openIncidentSheet(inc);
             };
-
             div.innerHTML = `
-                <div class="${typeInfo.color} w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0 shadow-md">
-                    <i class="fa-solid ${typeInfo.icon}"></i>
-                </div>
+                <div class="${typeInfo.color} w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0 shadow-md"><i class="fa-solid ${typeInfo.icon}"></i></div>
                 <div class="flex-1 min-w-0">
                     <div class="flex justify-between items-start">
-                        <h3 class="font-bold text-sm leading-tight text-slate-800 truncate pr-2">${inc.title}</h3>
-                        ${isSavedView ? `<button onclick="event.stopPropagation(); removeSaved('${inc.id}')" class="text-slate-400 hover:text-danger bg-slate-50 rounded-full p-1.5 w-7 h-7 flex items-center justify-center shrink-0"><i class="fa-solid fa-trash text-xs"></i></button>` : `<span class="text-[10px] font-medium bg-slate-100 px-2 py-0.5 rounded text-slate-500 whitespace-nowrap shrink-0">${inc.timeText}</span>`}
+                        <h3 class="font-bold text-sm leading-tight text-slate-800 truncate pr-2"></h3>
+                        ${isSavedView ? `<button class="remove-saved text-slate-400 hover:text-danger bg-slate-50 rounded-full p-1.5 w-7 h-7 flex items-center justify-center shrink-0"><i class="fa-solid fa-trash text-xs"></i></button>` : `<span class="text-[10px] font-medium bg-slate-100 px-2 py-0.5 rounded text-slate-500 whitespace-nowrap shrink-0">${inc.timeText}</span>`}
                     </div>
-                    <p class="text-xs text-slate-500 mt-1.5 line-clamp-2 leading-relaxed break-words">${inc.desc}</p>
+                    <p class="incident-desc text-xs text-slate-500 mt-1.5 line-clamp-2 leading-relaxed break-words"></p>
                     <div class="flex items-center gap-3 mt-3 text-[10px] font-medium text-slate-400 truncate">
                         <span class="flex items-center gap-1 shrink-0"><i class="fa-solid fa-location-arrow"></i> ${dist} km</span>
                         <span class="flex items-center gap-1 truncate"><i class="fa-solid fa-satellite"></i> ${typeInfo.source}</span>
                     </div>
-                </div>
-            `;
+                </div>`;
+            div.querySelector('h3').textContent = inc.title;
+            div.querySelector('.incident-desc').textContent = inc.desc;
+            const removeButton = div.querySelector('.remove-saved');
+            if (removeButton) {
+                removeButton.addEventListener('click', e => {
+                    e.stopPropagation();
+                    removeSaved(inc.id);
+                });
+            }
             return div;
         }
 
         // --- LOCAL STORAGE LOGIC ---
         function toggleSaveIncident() {
-            if(!currentSelectedIncident) return;
-            
+            if (!currentSelectedIncident) return;
             const index = savedIncidents.findIndex(i => i.id === currentSelectedIncident.id);
-            if(index > -1) {
-                // Remove
-                savedIncidents.splice(index, 1);
-            } else {
-                // Add
-                savedIncidents.push(currentSelectedIncident);
-            }
-            
+            if (index > -1) savedIncidents.splice(index, 1);
+            else savedIncidents.push(currentSelectedIncident);
+
             localStorage.setItem('civilAegisSaved', JSON.stringify(savedIncidents));
             updateSaveButtonUI();
             updateSavedBadge();
-            
-            // Notification toast
+
             const toast = document.createElement('div');
-            toast.className = "fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-5 py-2.5 rounded-full text-sm font-semibold z-[1000] shadow-lg transition-opacity flex items-center gap-2";
+            toast.className = 'fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-5 py-2.5 rounded-full text-sm font-semibold z-[1000] shadow-lg transition-opacity flex items-center gap-2';
             toast.innerHTML = index > -1 ? '<i class="fa-solid fa-trash-can"></i> Removed from archive' : '<i class="fa-solid fa-check-circle text-green-400"></i> Saved to device';
             document.body.appendChild(toast);
-            setTimeout(() => { toast.style.opacity = '0'; setTimeout(()=>toast.remove(), 300); }, 2000);
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2000);
         }
 
         function removeSaved(id) {
@@ -652,16 +587,15 @@
         }
 
         function updateSaveButtonUI() {
-            if(!currentSelectedIncident) return;
+            if (!currentSelectedIncident) return;
             const btn = document.getElementById('btn-save');
             const isSaved = savedIncidents.some(i => i.id === currentSelectedIncident.id);
-            
-            if(isSaved) {
-                btn.innerHTML = `<i class="fa-solid fa-bookmark"></i> Saved`;
+            if (isSaved) {
+                btn.innerHTML = '<i class="fa-solid fa-bookmark"></i> Saved';
                 btn.classList.remove('bg-white', 'text-slate-700', 'border-slate-300');
                 btn.classList.add('bg-blue-50', 'text-primary', 'border-blue-200');
             } else {
-                btn.innerHTML = `<i class="fa-regular fa-bookmark"></i> Save`;
+                btn.innerHTML = '<i class="fa-regular fa-bookmark"></i> Save';
                 btn.classList.add('bg-white', 'text-slate-700', 'border-slate-300');
                 btn.classList.remove('bg-blue-50', 'text-primary', 'border-blue-200');
             }
@@ -669,7 +603,7 @@
 
         function updateSavedBadge() {
             const badge = document.getElementById('saved-badge');
-            if(savedIncidents.length > 0) {
+            if (savedIncidents.length > 0) {
                 badge.innerText = savedIncidents.length;
                 badge.classList.remove('hidden');
             } else {
@@ -679,92 +613,63 @@
 
         // --- PDF EXPORT (SitRep) ---
         function exportToPDF() {
-            if(savedIncidents.length === 0) {
-                alert("Please save at least one incident to export a PDF.");
+            if (!savedIncidents.length) {
+                alert('Please save at least one incident to export a PDF.');
                 return;
             }
-
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
-
-            // Header (Light Theme adjustment)
-            doc.setFillColor(255, 255, 255); 
+            doc.setFillColor(255, 255, 255);
             doc.rect(0, 0, 210, 30, 'F');
-            doc.setTextColor(15, 23, 42); // slate-900
+            doc.setTextColor(15, 23, 42);
             doc.setFontSize(20);
-            doc.setFont("helvetica", "bold");
-            doc.text("CIVILAEGIS", 14, 20);
-            
+            doc.setFont('helvetica', 'bold');
+            doc.text('CIVILAEGIS', 14, 20);
             doc.setFontSize(10);
-            doc.setFont("helvetica", "normal");
-            doc.setTextColor(100, 116, 139); // slate-500
-            doc.text("SITUATION REPORT (SITREP)", 140, 20);
-            
-            // Separator line
-            doc.setDrawColor(226, 232, 240); // slate-200
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100, 116, 139);
+            doc.text('SITUATION REPORT (SITREP)', 140, 20);
+            doc.setDrawColor(226, 232, 240);
             doc.line(14, 25, 196, 25);
-
-            // Meta info
-            doc.setTextColor(15, 23, 42); // slate-900
+            doc.setTextColor(15, 23, 42);
             doc.setFontSize(10);
-            const dateStr = new Date().toLocaleString('en-US');
-            doc.text(`Generated On : ${dateStr}`, 14, 38);
-            doc.text(`Monitor Coordinates : ${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}`, 14, 44);
-            doc.text(`Total Incidents : ${savedIncidents.length} Reports`, 14, 50);
+            doc.text('Generated On : ' + new Date().toLocaleString('en-US'), 14, 38);
+            doc.text('Monitor Coordinates : ' + userLocation.lat.toFixed(5) + ', ' + userLocation.lng.toFixed(5), 14, 44);
+            doc.text('Total Incidents : ' + savedIncidents.length + ' Reports', 14, 50);
 
-            // Table Data
-            const tableColumn = ["Time", "Category", "Incident Description", "Coordinates"];
-            const tableRows = [];
-
-            savedIncidents.forEach(inc => {
-                const date = new Date(inc.timestamp).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'});
-                const typeName = INCIDENT_TYPES[inc.type].name;
-                const coord = `${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}`;
-                const descData = `${inc.title}\n${inc.desc}`;
-                tableRows.push([date, typeName, descData, coord]);
+            const tableRows = savedIncidents.map(inc => {
+                const date = new Date(inc.timestamp).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+                const typeName = (INCIDENT_TYPES[inc.type] || {}).name || inc.type;
+                return [date, typeName, inc.title + '\n' + inc.desc, inc.lat.toFixed(4) + ', ' + inc.lng.toFixed(4)];
             });
-
             doc.autoTable({
                 startY: 58,
-                head: [tableColumn],
+                head: [['Time', 'Category', 'Incident Description', 'Coordinates']],
                 body: tableRows,
                 theme: 'grid',
-                headStyles: { fillColor: [59, 130, 246], textColor: 255 }, // primary blue
-                columnStyles: {
-                    0: { cellWidth: 20 },
-                    1: { cellWidth: 25 },
-                    2: { cellWidth: 95 },
-                    3: { cellWidth: 40 }
-                },
-                styles: { fontSize: 9, cellPadding: 4, textColor: [51, 65, 85] } // slate-700
+                headStyles: { fillColor: [59, 130, 246], textColor: 255 },
+                columnStyles: { 0: {cellWidth:20}, 1: {cellWidth:25}, 2: {cellWidth:95}, 3: {cellWidth:40} },
+                styles: { fontSize:9, cellPadding:4, textColor:[51,65,85] }
             });
-
-            // Footer
             const pageCount = doc.internal.getNumberOfPages();
-            for(let i = 1; i <= pageCount; i++) {
+            for (let i = 1; i <= pageCount; i++) {
                 doc.setPage(i);
                 doc.setFontSize(8);
-                doc.setTextColor(148, 163, 184); // slate-400
+                doc.setTextColor(148, 163, 184);
                 doc.text(`Automatically generated by CivilAegis Open Intelligence System - Page ${i}`, 14, doc.internal.pageSize.height - 10);
             }
-
-            // Save
             doc.save(`CivilAegis_SitRep_${Date.now()}.pdf`);
         }
 
-        // --- UTILS ---
-        // Calculate distance in KM using Haversine formula
+        // Haversine distance in kilometres.
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; // Radius of the earth in km
+            const R = 6371;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = 
-                Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2); 
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-            return R * c; 
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
         }
-
     </script>
 </body>
 </html>
