@@ -25,6 +25,8 @@ test('inline JavaScript in the frontend parses successfully', () => {
 
 test('frontend merges combined and bucket feeds and removes duplicate rows', () => {
   assert.match(html, /const bucketRows = \(payload\.recentResults \|\| \[\]\)\.concat/);
+  assert.match(html, /payload\.riskContextResults \|\| \[\]/);
+  assert.match(html, /evidenceType: String\(row\.evidenceType \|\| 'incident'\)/);
   assert.match(html, /const sourceRows = \(Array\.isArray\(payload\.results\) \? payload\.results : \[\]\)\.concat\(bucketRows\)/);
   assert.match(html, /const seenRows = new Set\(\)/);
   assert.match(html, /if \(!stableKey \|\| seenRows\.has\(stableKey\)\) return false/);
@@ -82,4 +84,17 @@ test('free TinyFish Search runs only through the protected Worker endpoint', () 
   assert.match(html, /const TINYFISH_PROXY_URL = 'https:\/\/[^']+\/nearby-intel'/);
   assert.match(html, /fetchTinyFishIntel\(userLocation\.lat, userLocation\.lng/);
   assert.doesNotMatch(html, /TINYFISH_API_KEY\s*=/);
+});
+
+
+test('frontend separates historical incidents from structural risk context', () => {
+  assert.match(html, /article\.evidenceType === 'structural-risk' \|\| bucket === 'risk-context'/);
+  assert.match(html, /Risk context & prevalence · not live incident reports/);
+  assert.match(html, /This is historical context, not evidence of an active attack/);
+  assert.doesNotMatch(html, /tips\.push\('This source is undated\. Do not treat it as evidence of an active incident/);
+});
+
+test('geolocation fallback never triggers a TinyFish current-location search', () => {
+  assert.match(html, /if \(usingFallbackLocation\) \{\s*updateSourceStatus\('tinyfish', 'GPS required for local search'/);
+  assert.match(html, /'Outside UK API coverage'/);
 });
