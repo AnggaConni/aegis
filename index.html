@@ -1510,7 +1510,7 @@
 
         async function calculateRouteToCoordinates(destLat, destLng, label) {
             if (usingFallbackLocation) {
-                setRouteStatus('GPS unavailable. A new route cannot be calculated without current location. You can still open a previously saved plan offline.', 'error');
+                setRouteStatus('GPS unavailable. A new route cannot be calculated without current location. Previously saved plans can still be opened offline.', 'error');
                 return;
             }
             if (routeBusy) return;
@@ -1518,7 +1518,7 @@
             selectingRouteDestination = false;
             document.getElementById('route-go').disabled = true;
             setRouteStatus(journeyMode === 'roundtrip'
-                ? 'Calculating both legs and checking nearby hazard reports…'
+                ? 'Calculating PERGI first. It will be saved before PULANG is requested…'
                 : 'Calculating route and checking nearby hazard reports…', 'neutral');
 
             const origin = { lat: Number(userLocation.lat), lng: Number(userLocation.lng) };
@@ -1528,30 +1528,25 @@
             routeDestinationLabel = label || 'Destination';
 
             try {
+                // Save the outbound leg immediately so a failure while requesting the return leg
+                // never loses the route that has already been calculated.
                 const outboundRoutes = await requestDrivingRoutes(origin, destination);
-                let returnRoutes = [];
-                if (journeyMode === 'roundtrip') {
-                    setRouteStatus('PERGI route ready. Calculating PULANG route…', 'neutral');
-                    returnRoutes = await requestDrivingRoutes(destination, origin);
-                }
-
+                activeJourneyLeg = 'outbound';
+                routeOptions = outboundRoutes;
+                selectedRouteIndex = 0;
                 journeyPlan = {
                     version: 1,
                     mode: journeyMode,
                     origin: origin,
                     destination: destination,
                     destinationLabel: routeDestinationLabel,
-                    routes: { outbound: compactRouteOptions(outboundRoutes), return: compactRouteOptions(returnRoutes) },
+                    routes: { outbound: compactRouteOptions(outboundRoutes), return: [] },
                     selectedIndexes: { outbound: 0, return: 0 },
                     activeLeg: 'outbound',
                     savedAt: new Date().toISOString(),
                     alertRadiusMeters: routeBufferMeters
                 };
-                activeJourneyLeg = 'outbound';
-                routeOptions = outboundRoutes;
-                selectedRouteIndex = 0;
                 updateJourneyControls();
-                saveJourneyPlan();
 
                 if (routeLayer) map.removeLayer(routeLayer);
                 if (routeStartMarker) map.removeLayer(routeStartMarker);
@@ -1561,19 +1556,31 @@
                 document.getElementById('route-alternatives').innerHTML = '';
                 document.getElementById('route-alerts').innerHTML = '';
                 document.getElementById('route-steps').innerHTML = '';
-
                 applyRouteOption(0, true);
-                if (typeof fetchRouteWeather === 'function') {
-                    fetchRouteWeather(destination.lat, destination.lng, routeDestinationLabel);
-                }
-                fetchTinyFishIntel(destination.lat, destination.lng, routeDestinationLabel, true);
+                saveJourneyPlan();
+                fetchRouteWeather(destination.lat, destination.lng, routeDestinationLabel);
 
-                setRouteStatus(journeyMode === 'roundtrip'
-                    ? 'Both legs calculated and saved locally. Use PERGI/PULANG tabs to switch routes without recalculating.'
-                    : 'Route calculated and saved locally. You can reopen it without signal.', 'ok');
+                if (journeyMode === 'roundtrip') {
+                    setRouteStatus('PERGI is saved. Calculating PULANG…', 'neutral');
+                    const returnRoutes = await requestDrivingRoutes(destination, origin);
+                    journeyPlan.routes.return = compactRouteOptions(returnRoutes);
+                    journeyPlan.savedAt = new Date().toISOString();
+                    saveJourneyPlan();
+                    updateJourneyControls();
+                    setRouteStatus('Both legs saved. Use PERGI/PULANG tabs to switch routes without recalculating.', 'ok');
+                } else {
+                    setRouteStatus('Route calculated and saved on this device. You can reopen it without signal.', 'ok');
+                }
+
+                fetchTinyFishIntel(destination.lat, destination.lng, routeDestinationLabel, true);
             } catch (error) {
                 console.warn('Route calculation failed:', error);
-                setRouteStatus((error.message || 'Route calculation failed.') + ' Public routing may be rate-limited.', 'error');
+                const returnIncomplete = journeyMode === 'roundtrip' && journeyPlan &&
+                    journeyPlan.routes && journeyPlan.routes.outbound && journeyPlan.routes.outbound.length &&
+                    !(journeyPlan.routes.return || []).length;
+                setRouteStatus(returnIncomplete
+                    ? 'PERGI route is saved locally, but PULANG could not be calculated. Reconnect and press Route to complete the round trip.'
+                    : (error.message || 'Route calculation failed.') + ' Public routing may be rate-limited.', 'error');
             } finally {
                 routeBusy = false;
                 document.getElementById('route-go').disabled = false;
