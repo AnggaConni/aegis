@@ -31,5 +31,5 @@ jobs:
         run: node --check --input-type=module < tinyfish-worker.js
       - name: Check service worker syntax
         run: node --check sw.js
-      - name: Run timeline and deduplication tests
-        run: node --test tests/tinyfish-worker.test.mjs
+      - name: Run timeline and frontend regression tests
+        run: node --test tests/*.test.mjs
