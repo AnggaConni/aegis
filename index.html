@@ -98,6 +98,10 @@
         .route-mini-btn.active { background:#dbeafe; color:#1d4ed8; border-color:#2563eb; }
         .route-primary-btn { border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; padding:8px 11px; font-size:11px; font-weight:800; }
         .route-status { font-size:10px; line-height:1.45; color:#64748b; margin-top:7px; }
+        .journey-mode-btn, .journey-leg-btn { flex:1; border:1px solid #cbd5e1; border-radius:8px; padding:7px 5px; background:#fff; color:#475569; font-size:10px; font-weight:800; }
+        .journey-mode-btn.active, .journey-leg-btn.active { border-color:#2563eb; color:#1d4ed8; background:#dbeafe; }
+        .offline-plan-note { font-size:9px; line-height:1.4; color:#166534; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:7px 8px; margin-top:7px; }
+        .offline-plan-note.stale { color:#92400e; background:#fffbeb; border-color:#fde68a; }
         .route-summary { background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:10px; margin-top:9px; }
         .route-alt-btn { width:100%; text-align:left; padding:7px 8px; margin-top:5px; border:1px solid #cbd5e1; border-radius:8px; background:white; font-size:10px; color:#334155; }
         .route-alt-btn.active { border-color:#2563eb; background:#dbeafe; color:#1d4ed8; font-weight:800; }
@@ -234,6 +238,17 @@
                                 <p class="text-[11px] font-extrabold text-slate-900"><i class="fa-solid fa-route text-blue-600 mr-1"></i> Route Planner</p>
                                 <span class="text-[9px] font-bold text-blue-700 bg-blue-100 rounded px-2 py-1">DRIVING BETA</span>
                             </div>
+                            <div class="mt-1.5 mb-2">
+                                <p class="text-[10px] font-bold text-slate-600 mb-1.5">Trip plan</p>
+                                <div class="flex gap-1.5">
+                                    <button id="mode-oneway" class="journey-mode-btn active" type="button" onclick="setJourneyMode('oneway')"><i class="fa-solid fa-arrow-right mr-1"></i>One way</button>
+                                    <button id="mode-roundtrip" class="journey-mode-btn" type="button" onclick="setJourneyMode('roundtrip')"><i class="fa-solid fa-arrows-rotate mr-1"></i>Round trip (PP)</button>
+                                </div>
+                                <div id="journey-leg-controls" class="hidden flex gap-1.5 mt-1.5">
+                                    <button id="leg-outbound" class="journey-leg-btn active" type="button" onclick="switchJourneyLeg('outbound')"><i class="fa-solid fa-arrow-right mr-1"></i>PERGI</button>
+                                    <button id="leg-return" class="journey-leg-btn" type="button" onclick="switchJourneyLeg('return')"><i class="fa-solid fa-arrow-left mr-1"></i>PULANG</button>
+                                </div>
+                            </div>
                             <form onsubmit="event.preventDefault(); calculateRouteFromSearch();" class="flex gap-1.5">
                                 <input id="route-destination" class="route-input flex-1" type="search" placeholder="Destination or place name" aria-label="Destination" autocomplete="off" required>
                                 <button id="route-go" class="route-primary-btn" type="submit">Route</button>
@@ -251,6 +266,7 @@
                                 </select>
                             </div>
                             <p id="route-status" class="route-status">Route planning requires GPS. Search runs only when you press Route; no autocomplete requests are sent.</p>
+                            <div id="offline-plan-note" class="offline-plan-note hidden"><i class="fa-solid fa-floppy-disk mr-1"></i>Plan saved on this device. Return route and steps can be reopened without signal.</div>
                             <div id="route-summary" class="route-summary hidden">
                                 <div id="route-summary-main" class="text-sm font-extrabold text-blue-900"></div>
                                 <div id="route-summary-meta" class="text-[10px] text-blue-800 mt-1"></div>
@@ -408,6 +424,13 @@
         let routeWarnings = [];
         let routeBufferMeters = 1000;
         let safetyRefreshBusy = false;
+        let journeyMode = 'oneway';
+        let activeJourneyLeg = 'outbound';
+        let journeyPlan = null;
+        let routePlanOrigin = null;
+        let cachedSafetySnapshotAt = null;
+        const SAFETY_SNAPSHOT_KEY = 'civilAegisSafetySnapshotV1';
+        const JOURNEY_PLAN_KEY = 'civilAegisJourneyPlanV1';
 
         function updateSourceStatus(sourceId, label, state = 'neutral') {
             const node = document.getElementById('status-' + sourceId);
@@ -464,8 +487,10 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            restoreLocalSafetyState();
             initApp();
             updateSavedBadge();
+            registerOfflineApp();
         });
 
         function initApp() {
