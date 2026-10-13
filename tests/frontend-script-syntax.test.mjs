@@ -187,3 +187,14 @@ test('BMKG feed expansion only elevates recent timestamped earthquakes', () => {
   assert.match(html, /magnitude >= 4\.5/);
   assert.match(html, /tsunamiPotential/);
 });
+
+
+test('TinyFish frontend allows long-running searches and surfaces provider failures', () => {
+  assert.match(html, /fetchWithTimeout\(requestUrl\.toString\(\), \{ headers: \{ 'Accept': 'application\/json' \} \}, 60000\)/);
+  assert.match(html, /error\.payload = payload/);
+  assert.match(html, /statusLabel = 'Rate limited'/);
+  assert.match(html, /statusLabel = 'Worker secret missing'/);
+  assert.match(html, /statusLabel = 'API key rejected'/);
+  assert.match(html, /statusLabel = 'Network\/CORS error'/);
+  assert.match(html, /statusNode\.title = reasons\.length/);
+});
