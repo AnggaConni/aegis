@@ -280,7 +280,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v4?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v5?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -473,7 +473,8 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 3,
+                filterVersion: 4,
+                buildVersion: 'timeline-v4-blast-aware',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults.slice(0, 8),
@@ -485,7 +486,7 @@ export default {
                 note: 'Event and publication dates are separate. If only publication age is known, the timeline bucket describes the article date, not the event date. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 3, diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 4, diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
