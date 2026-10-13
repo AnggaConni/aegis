@@ -1,25 +1,24 @@
 /**
- * CivilAegis TinyFish local-news proxy
- *
- * Deploy this file as a Cloudflare Worker. Store TINYFISH_API_KEY as a Worker secret.
- * Do not put TinyFish API keys in index.html or other public GitHub Pages files.
- *
+ * CivilAegis TinyFish local-news proxy.
+ * Search results are awareness leads, not independently verified incident reports.
  * Endpoint: GET /nearby-intel?lat=-6.2&lng=106.8
- * Returns local search signals only; these are not verified incident records and have no claimed exact coordinates.
  */
-
 const DEFAULT_ALLOWED_ORIGINS = 'https://anggaconni.github.io';
+const DAY_MS = 86400000;
+const FIVE_YEARS_DAYS = 1826.25;
 
 function jsonResponse(body, status, origin) {
-    const headers = {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': origin || 'null',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Vary': 'Origin'
-    };
-    return new Response(JSON.stringify(body), { status: status || 200, headers: headers });
+    return new Response(JSON.stringify(body), {
+        status: status || 200,
+        headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': origin || 'null',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Vary': 'Origin'
+        }
+    });
 }
 
 function extractResults(payload) {
@@ -31,23 +30,21 @@ function extractResults(payload) {
     return [];
 }
 
+function normalize(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 function getLocality(address, fallback) {
     address = address || {};
-    // Prefer city/regency fields; never fall back to village/suburb/district.
     const municipality = address.city || address.town || address.municipality ||
         address.county || address.city_municipality || address.state_district || '';
     const region = address.state || address.province || '';
-    const values = [municipality, region, 'Indonesia'].filter(Boolean);
     const unique = [];
-    values.forEach(function (value) {
-        if (unique.indexOf(value) < 0) unique.push(value);
+    [municipality, region, 'Indonesia'].filter(Boolean).forEach(value => {
+        if (!unique.includes(value)) unique.push(value);
     });
     return unique.length > 1 ? unique.join(', ') : (municipality || region || fallback) + ', Indonesia';
-}
-
-function normalizeForMatching(value) {
-    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function getLocalitySearchTerms(locality) {
@@ -57,13 +54,8 @@ function getLocalitySearchTerms(locality) {
         .replace(/^daerah istimewa\s+/i, '')
         .replace(/^(kota administrasi|kabupaten administrasi|kota|kabupaten|regency|municipality|city of|city|kab\.?|kot\.?|dki)\s+/i, '')
         .trim();
-    const terms = [];
-    [municipality, firstPart].forEach(value => {
-        const normalized = normalizeForMatching(value);
-        if (normalized.length >= 4 && !terms.includes(normalized)) terms.push(normalized);
-    });
-    // Do not split a municipality into individual words; partial matches create false positives.
-    return terms.sort((a, b) => b.length - a.length);
+    return Array.from(new Set([municipality, firstPart].map(normalize).filter(value => value.length >= 4)))
+        .sort((a, b) => b.length - a.length);
 }
 
 function assessIncidentLocation(item, localityTerms) {
@@ -71,852 +63,107 @@ function assessIncidentLocation(item, localityTerms) {
     const snippet = String(item.snippet || item.description || item.content || '');
     const url = String(item.url || item.link || item.href || '');
     const contentText = title + ' ' + snippet;
-    const normalizedContent = normalizeForMatching(contentText);
-    const normalizedUrl = normalizeForMatching(url);
+    const normalizedContent = normalize(contentText);
+    const normalizedUrl = normalize(url);
     if (!localityTerms.length) return { accepted: false, reason: 'no-locality-term' };
+
     const matchedTerm = localityTerms.find(term => normalizedContent.includes(term));
     if (!matchedTerm) {
-        return { accepted: false, reason: localityTerms.some(term => normalizedUrl.includes(term)) ? 'city-in-url-only' : 'no-city-mention' };
+        return {
+            accepted: false,
+            reason: localityTerms.some(term => normalizedUrl.includes(term)) ? 'city-in-url-only' : 'no-city-mention'
+        };
     }
 
-    const rawCombined = title + ' ' + snippet + ' ' + url;
-    const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(rawCombined);
-    const foreignGenericDomains = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
-    if (genericReference || foreignGenericDomains) return { accepted: false, reason: 'generic-or-foreign-reference' };
+    const allText = title + ' ' + snippet + ' ' + url;
+    const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(allText);
+    const foreignGenericDomain = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
+    if (genericReference || foreignGenericDomain) return { accepted: false, reason: 'generic-or-foreign-reference' };
 
-    const nationalScale = /(nationwide|across indonesia|throughout indonesia|across the country|across the archipelago|several provinces|multiple provinces|multiple cities|nationwide unrest|nationwide protests|di seluruh indonesia|lintas provinsi|sejumlah daerah|berbagai daerah|kerusuhan nasional)/i.test(rawCombined);
-    const escaped = matchedTerm.replace(/[.*+?^$()|[\]\\]/g, '\\function getLocalitySearchTerms(locality) {
-    const ignored = new Set(['indonesia', 'province', 'provinsi', 'java', 'jawa', 'west', 'east', 'central', 'barat', 'timur', 'tengah', 'utara', 'selatan']);
-    const terms = [];
-    const add = function (value) {
-        const normalized = normalizeForMatching(value);
-        if (normalized.length < 3 || ignored.has(normalized) || terms.indexOf(normalized) >= 0) return;
-        terms.push(normalized);
-    };
-    const firstPart = String(locality || '').split(',')[0].trim();
-    add(firstPart);
-    const municipality = firstPart
-        .replace(/^daerah khusus ibukota\s+/i, '')
-        .replace(/^daerah istimewa\s+/i, '')
-        .replace(/^(kota administrasi|kabupaten administrasi|kota|kabupaten|regency|municipality|city of|city|kab\.?|kot\.?|dki)\s+/i, '')
-        .trim();
-    add(municipality);
-    municipality.split(/\s+/).filter(part => part.length >= 4 && !ignored.has(part)).forEach(add);
-    return terms;
-}
-
-function isLocalIncidentResult(item, localityTerms) {
-    const title = String(item.title || item.name || '');
-    const snippet = String(item.snippet || item.description || item.content || '');
-    const url = String(item.url || item.link || item.href || '');
-    const combined = normalizeForMatching(title + ' ' + snippet + ' ' + url);
-    if (!localityTerms.length) return false;
-    const mentionsLocality = localityTerms.some(term => combined.includes(term));
-    if (!mentionsLocality) return false;
-
-    // Filter general foreign crime-statistics/reference pages even if a broad query surfaced them.
-    const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(title + ' ' + snippet + ' ' + url);
-    const foreignGenericDomains = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
-    if (genericReference || foreignGenericDomains) return false;
-    return true;
-}').replace(/\s+/g, '\\s+');
+    const nationalScale = /(nationwide|across indonesia|throughout indonesia|across the country|across the archipelago|several provinces|multiple provinces|multiple cities|nationwide unrest|nationwide protests|di seluruh indonesia|lintas provinsi|sejumlah daerah|berbagai daerah|kerusuhan nasional)/i.test(allText);
+    const city = localityTerms.find(term => !term.startsWith('daerah khusus ibukota')) || matchedTerm;
+    const escapedCity = city.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
     const explicitLocalContext = new RegExp(
-        '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?' + escaped + '\\b|' +
-        '\\b' + escaped + '\\s+(?:attacks?|murders?|homicides?|rapes?|robberies|riots?|clashes|protests?|floods?|fires?|accidents?|pickpocketing|snatching|crime|kerusuhan|pembunuhan|pemerkosaan|pencopetan|penjambretan|kecelakaan|banjir|kebakaran)\\b)',
+        '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?' + escapedCity + '\\b|' +
+        '\\b' + escapedCity + '\\s+(?:attacks?|murders?|homicides?|rapes?|robberies|riots?|clashes|protests?|floods?|fires?|accidents?|pickpocketing|snatching|crime|kerusuhan|pembunuhan|pemerkosaan|pencopetan|penjambretan|kecelakaan|banjir|kebakaran)\\b)',
         'i'
     ).test(contentText);
+
     const scope = nationalScale && !explicitLocalContext
         ? 'national-context'
         : explicitLocalContext
             ? 'city-mentioned-location-unverified'
             : 'city-mentioned-context-unclear';
     const status = scope === 'national-context'
-        ? 'National or multi-location report; city is mentioned but exact incident locations are not confirmed.'
+        ? 'National or multi-location report; the city is mentioned but exact incident locations are not confirmed.'
         : scope === 'city-mentioned-location-unverified'
-            ? 'City is linked to the incident in the text; exact incident location has not been independently confirmed.'
-            : 'City is mentioned in the article, but the event location is unclear.';
+            ? 'The city is linked to the incident in the text; exact incident location has not been independently confirmed.'
+            : 'The city is mentioned in the article, but the event location is unclear.';
     return { accepted: true, reason: 'city-mentioned', scope: scope, status: status, matchedTerm: matchedTerm };
 }
 
 function parseDateValue(value, nowMs) {
     if (value === null || value === undefined || value === '') return null;
     const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+
     if (typeof value === 'number' && Number.isFinite(value)) {
         const ms = value > 100000000000 ? value : value * 1000;
-        if (ms > 0 && ms <= now + 86400000) return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'absolute-timestamp', raw: value };
+        if (ms > 0 && ms <= now + DAY_MS) return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'absolute-timestamp', raw: value };
     }
+
     const raw = String(value).trim();
-    const monthNames = {
-        january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
-        januari: 0, februari: 1, maret: 2, mei: 4, juni: 5, juli: 6, agustus: 7, desember: 11
+    const relativeText = raw.toLowerCase();
+    if (/\b(today|just now|moments ago)\b/.test(relativeText)) {
+        return { iso: new Date(now).toISOString(), dateMs: now, precision: 'relative-estimate', ageDays: 0, raw: raw, relativeLabel: 'approximately today' };
+    }
+    if (/\byesterday\b/.test(relativeText)) {
+        const ms = now - DAY_MS;
+        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', ageDays: 1, raw: raw, relativeLabel: 'approximately 1 day ago' };
+    }
+
+    const relative = relativeText.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
+    const abbreviated = relativeText.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
+    const match = relative || abbreviated;
+    if (match) {
+        const amount = Number(match[1]);
+        const unit = match[2];
+        const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
+            : /^hour|^hr/.test(unit) ? 1 / 24
+            : /^day|^d$/.test(unit) ? 1
+            : /^week|^wk/.test(unit) ? 7
+            : /^month|^mo/.test(unit) ? 30.4375
+            : 365.2425;
+        const ageDays = amount * multiplier;
+        const ms = now - ageDays * DAY_MS;
+        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', ageDays: ageDays, raw: raw, relativeLabel: 'approximately ' + raw };
+    }
+
+    // Date.parse does not reliably handle Indonesian month names, so normalize those first.
+    const monthNumbers = {
+        january: 0, februari: 1, february: 1, maret: 2, march: 2, april: 3, mei: 4, may: 4,
+        juni: 5, june: 5, juli: 6, july: 6, agustus: 7, august: 7, september: 8,
+        oktober: 9, october: 9, november: 10, desember: 11, december: 11
     };
-    const monthAlternatives = 'January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Desember';
-    const localDateMatch = raw.match(new RegExp('^(\\d{1,2})\\s+(' + monthAlternatives + ')\\s+(\\d{4})
-
-    const normalized = raw.toLowerCase().trim();
-    if (/\b(today|just now|moments ago)\b/.test(normalized)) {
-        return { iso: new Date(now).toISOString(), dateMs: now, precision: 'relative-estimate', raw: raw, relativeLabel: 'approximately today' };
-    }
-    if (/\byesterday\b/.test(normalized)) {
-        const ms = now - 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: 1, relativeLabel: 'approximately 1 day ago' };
-    }
-    const relative = normalized.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
-    if (relative) {
-        const amount = Number(relative[1]);
-        const unit = relative[2];
-        const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
-            : /^hour|^hr/.test(unit) ? 1 / 24
-            : /^day/.test(unit) ? 1
-            : /^week|^wk/.test(unit) ? 7
-            : /^month|^mo/.test(unit) ? 30.4375
-            : 365.2425;
-        const ageDays = amount * multiplier;
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
-    }
-    const abbreviated = normalized.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
-    if (abbreviated) {
-        const unit = abbreviated[2];
-        const ageDays = Number(abbreviated[1]) * (/^d$/.test(unit) ? 1 : /^wk/.test(unit) ? 7 : /^mo/.test(unit) ? 30.4375 : 365.2425);
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
-    }
-    return null;
-}
-
-function extractEventDate(item, title, snippet, nowMs) {
-    const structured = item.eventDate || item.event_date || item.incidentDate || item.incident_date ||
-        item.occurredAt || item.occurred_at || item.eventTimestamp || item.incident_timestamp || null;
-    if (structured) {
-        const parsed = parseDateValue(structured, nowMs);
-        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-field-from-search-result' };
-    }
-    const text = String(title || '') + ' ' + String(snippet || '');
-    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
-    const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})';
-    const re = new RegExp('(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian pada|insiden pada)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')', 'i');
-    const match = text.match(re);
-    if (match) {
-        const parsed = parseDateValue(match[1], nowMs);
-        if (parsed) return { ...parsed, status: 'event-date-mentioned-in-summary' };
-    }
-    return null;
-}
-
-function formatAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
-    if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
-    const days = Math.max(0, ageDays);
-    const ageText = days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago'
-        : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago'
-        : (days / 365.2425).toFixed(1) + ' years ago';
-    if (basis === 'event-date') {
-        if (eventParsed && eventParsed.precision === 'relative-estimate') {
-            return 'Event age estimated from relative source wording; verify before relying on it';
-        }
-        return 'Event date in source metadata/text; approximately ' + ageText + ' · verify original report';
-    }
-    if (publicationParsed && publicationParsed.precision === 'relative-estimate') {
-        return 'Article appears published ' + (publicationParsed.relativeLabel || 'at a relative time') + '; event date unconfirmed';
-    }
-    return 'Article published ' + ageText + '; event date unconfirmed';
-}
-
-export default {
-    async fetch(request, env, ctx) {
-        const url = new URL(request.url);
-        const origin = request.headers.get('Origin') || '';
-        const allowedOrigins = String(env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
-            .split(',').map(function (value) { return value.trim(); }).filter(Boolean);
-        const isAllowedOrigin = !origin || allowedOrigins.indexOf(origin) >= 0;
-        const corsOrigin = origin && isAllowedOrigin ? origin : allowedOrigins[0];
-
-        if (!isAllowedOrigin) return jsonResponse({ error: 'Origin not allowed' }, 403, 'null');
-        if (request.method === 'OPTIONS') return new Response(null, {
-            status: 204,
-            headers: {
-                'Access-Control-Allow-Origin': corsOrigin,
-                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Max-Age': '86400',
-                'Vary': 'Origin'
-            }
-        });
-        if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
-        if (url.pathname !== '/nearby-intel') return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
-        if (!env.TINYFISH_API_KEY) return jsonResponse({ error: 'Worker secret TINYFISH_API_KEY is not configured' }, 503, corsOrigin);
-
-        const rawLat = Number(url.searchParams.get('lat'));
-        const rawLng = Number(url.searchParams.get('lng'));
-        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng) ||
-            rawLat < -90 || rawLat > 90 || rawLng < -180 || rawLng > 180) {
-            return jsonResponse({ error: 'Valid lat and lng query parameters are required' }, 400, corsOrigin);
-        }
-
-        // Round coordinates before reverse-geocoding. TinyFish receives only the resulting locality,
-        // not the user's exact GPS coordinates.
-        const lat = Math.round(rawLat * 100) / 100;
-        const lng = Math.round(rawLng * 100) / 100;
-        const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v2?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
-        const cache = caches.default;
-        try {
-            const cached = await cache.match(cacheKey);
-            if (cached) {
-                const body = await cached.json();
-                return jsonResponse(body, 200, corsOrigin);
-            }
-        } catch (_) {
-            // Cache is an optimization; continue with live search when unavailable.
-        }
-
-        let locality = lat.toFixed(2) + ', ' + lng.toFixed(2);
-        try {
-            const reverseUrl = new URL('https://nominatim.openstreetmap.org/reverse');
-            reverseUrl.searchParams.set('format', 'jsonv2');
-            reverseUrl.searchParams.set('lat', String(lat));
-            reverseUrl.searchParams.set('lon', String(lng));
-            reverseUrl.searchParams.set('zoom', '10');
-            reverseUrl.searchParams.set('addressdetails', '1');
-            const reverseResponse = await fetch(reverseUrl.toString(), {
-                headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'CivilAegisSafetyRadar/1.0'
-                }
-            });
-            if (reverseResponse.ok) {
-                const reversePayload = await reverseResponse.json();
-                locality = getLocality(reversePayload.address, locality);
-            }
-        } catch (_) {
-            // Keep rounded coordinates as a broad-area fallback.
-        }
-
-        const localityTerms = getLocalitySearchTerms(locality);
-        const baseQuery = 'Find specific public-safety incidents that explicitly happened in ' + locality + ' in Indonesia. Search Indonesian and English-language local reporting using terms including pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, riot, fatal clash, pickpocketing, robbery, scam, card fraud and road accident. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Only return articles that explicitly mention ' + locality + ' or its municipality name and describe an incident in that locality. Do not return generic crime-statistics pages, research/reference pages, incidents in other countries, or national/global trends not tied to the searched city. Include source links, dates, reported location and status when available. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
-        const timeWindows = [
-            { label: 'recent-30-days', query: 'published or occurred within the last 30 days', maxAgeDays: 30 },
-            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago', maxAgeDays: 730 },
-            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago', maxAgeDays: 1826 }
-        ];
-
-        try {
-            const gathered = [];
-            const seen = new Set();
-            let successfulSearches = 0;
-            let rawResultCount = 0;
-            const diagnostics = {
-                rejectedNonLocalCount: 0,
-                rejectedGenericReferenceCount: 0,
-                rejectedNoSourceUrlCount: 0,
-                duplicateCount: 0,
-                rejectedOutsideFiveYearWindowCount: 0,
-                dateUnconfirmedCount: 0,
-                relativePublicationDateCount: 0,
-                eventDateCount: 0,
-                cityMentionCount: 0,
-                nationalContextCount: 0
-            };
-            const nowMs = Date.now();
-            const oneDayMs = 86400000;
-            for (const window of timeWindows) {
-                const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
-                    '. This label records the search pass only; do not substitute the search pass for an incident date. ' +
-                    'Return separate fields for article publication date and incident/event date if possible. Include the precise city or district only when the source states it.';
-                const searchUrl = new URL('https://api.search.tinyfish.ai/');
-                searchUrl.searchParams.set('query', scopedQuery);
-                const searchResponse = await fetch(searchUrl.toString(), {
-                    headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' }
-                });
-                if (!searchResponse.ok) continue;
-                successfulSearches += 1;
-                const payload = await searchResponse.json();
-                const rawRows = extractResults(payload);
-                rawResultCount += rawRows.length;
-                rawRows.forEach(function (item) {
-                    const targetUrl = item.url || item.link || item.href || '';
-                    if (!/^https?:\/\//i.test(targetUrl)) {
-                        diagnostics.rejectedNoSourceUrlCount += 1;
-                        return;
-                    }
-                    const locationAssessment = assessIncidentLocation(item, localityTerms);
-                    if (!locationAssessment.accepted) {
-                        diagnostics.rejectedNonLocalCount += 1;
-                        if (locationAssessment.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
-                        return;
-                    }
-                    diagnostics.cityMentionCount += 1;
-                    if (locationAssessment.scope === 'national-context') diagnostics.nationalContextCount += 1;
-
-                    const key = targetUrl.toLowerCase();
-                    if (seen.has(key)) {
-                        diagnostics.duplicateCount += 1;
-                        return;
-                    }
-
-                    const title = String(item.title || item.name || 'Local public-safety report');
-                    const snippet = String(item.snippet || item.description || item.content || '');
-                    const text = (title + ' ' + snippet).toLowerCase();
-                    let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(text)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(text)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(text)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(text)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(text)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(text)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(text)) category = 'disaster';
-
-                    const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
-                    const publicationParsed = parseDateValue(publicationRaw, nowMs);
-                    const eventParsed = extractEventDate(item, title, snippet, nowMs);
-                    const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / oneDayMs) : null;
-                    const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / oneDayMs) : null;
-                    const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
-                    const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
-                    const timelineBucket = timelineAgeDays === null ? 'undated'
-                        : timelineAgeDays <= 30 ? 'recent-30-days'
-                        : timelineAgeDays <= 730.5 ? 'history-30-days-to-2-years'
-                        : timelineAgeDays <= 1826.25 ? 'history-2-to-5-years'
-                        : 'outside-5-year-window';
-
-                    // The incident date takes precedence over publication date. If we only know
-                    // publication age, describe the item as dated coverage, not as a dated incident.
-                    if (timelineBucket === 'outside-5-year-window') {
-                        diagnostics.rejectedOutsideFiveYearWindowCount += 1;
-                        return;
-                    }
-                    if (!eventParsed && !publicationParsed) diagnostics.dateUnconfirmedCount += 1;
-                    if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
-                    if (eventParsed) diagnostics.eventDateCount += 1;
-
-                    seen.add(key);
-                    let source = '';
-                    try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
-                    const explicitEventLocation = item.eventLocation || item.event_location || item.incidentLocation || item.incident_location || null;
-                    const scopeText = locationAssessment.scope === 'national-context'
-                        ? 'National or multi-location context; not a confirmed incident point in this city'
-                        : locationAssessment.scope === 'city-mentioned-location-unverified'
-                            ? 'City linked to the report; exact place not independently confirmed'
-                            : 'City is mentioned; the specific event location is unclear';
-                    const articlePublishedAt = publicationParsed && publicationParsed.precision !== 'relative-estimate'
-                        ? publicationParsed.iso : null;
-                    const publicationDateLabel = publicationParsed
-                        ? (publicationParsed.precision === 'relative-estimate'
-                            ? 'Publication age estimated from source wording: ' + publicationParsed.relativeLabel
-                            : 'Article published ' + publicationParsed.iso.slice(0, 10))
-                        : 'Publication date unconfirmed';
-                    const eventDateLabel = eventParsed
-                        ? (eventParsed.precision === 'relative-estimate'
-                            ? 'Event date estimated from relative source wording; verify'
-                            : 'Event date mentioned/supplied by search result: ' + eventParsed.iso.slice(0, 10))
-                        : 'Event date unconfirmed';
-                    const recencyLabel = formatAgeLabel(
-                        timelineAgeDays,
-                        timelineBasis,
-                        publicationParsed,
-                        eventParsed
-                    );
-                    gathered.push({
-                        id: key,
-                        title: title,
-                        snippet: snippet,
-                        url: targetUrl,
-                        source: source || 'TinyFish Search',
-                        area: locality,
-                        searchArea: locality,
-                        radiusType: 'municipality/city/regency',
-                        publishedAt: articlePublishedAt,
-                        publishedAtRaw: publicationRaw === null ? null : String(publicationRaw),
-                        publicationDateLabel: publicationDateLabel,
-                        publicationDatePrecision: publicationParsed ? publicationParsed.precision : 'unconfirmed',
-                        publicationAgeDays: publicationAgeDays,
-                        eventDate: eventParsed ? eventParsed.iso : null,
-                        eventDatePrecision: eventParsed ? eventParsed.precision : 'unconfirmed',
-                        eventDateStatus: eventParsed ? eventParsed.status : 'event-date-unconfirmed',
-                        eventDateLabel: eventDateLabel,
-                        eventAgeDays: eventAgeDays,
-                        ageYears: timelineAgeDays === null ? null : timelineAgeDays / 365.2425,
-                        timelineAgeDays: timelineAgeDays,
-                        timelineBasis: timelineBasis,
-                        timelineBucket: timelineBucket,
-                        timelineLabel: recencyLabel,
-                        recencyLabel: recencyLabel,
-                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? publicationParsed.precision === 'relative-estimate' ? 'Relative publication age estimate; event date unconfirmed' : 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
-                        searchWindow: window.label,
-                        category: category,
-                        eventLocation: explicitEventLocation ? String(explicitEventLocation) : null,
-                        eventLocationScope: locationAssessment.scope,
-                        eventLocationStatus: locationAssessment.status,
-                        locationEvidence: locationAssessment.reason,
-                        verified: false
-                    });
-                });
-            }
-
-            const recentResults = [];
-            const mediumTermResults = [];
-            const longTermResults = [];
-            const undatedResults = [];
-            gathered.forEach(function (item) {
-                if (item.timelineBucket === 'recent-30-days') recentResults.push(item);
-                else if (item.timelineBucket === 'history-30-days-to-2-years') mediumTermResults.push(item);
-                else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
-                else if (item.timelineBucket === 'undated') undatedResults.push(item);
-            });
-
-            const responseBody = {
-                area: locality,
-                searchArea: locality,
-                radiusType: 'municipality/city/regency',
-                generatedAt: new Date().toISOString(),
-                successfulSearches: successfulSearches,
-                filterVersion: 3,
-                rawResultCount: rawResultCount,
-                diagnostics: diagnostics,
-                recentResults: recentResults.slice(0, 8),
-                mediumTermResults: mediumTermResults.slice(0, 8),
-                longTermResults: longTermResults.slice(0, 8),
-                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
-                undatedResults: undatedResults.slice(0, 8),
-                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event date and publication date are tracked separately. If only publication date is available, the timeline bucket describes when the article was published, not when the incident happened. City mention is not precise geolocation. TinyFish results are unverified search leads; review the original source before making safety decisions.'
-            };
-
-            if (!successfulSearches) {
-                return jsonResponse({
-                    error: 'TinyFish Search did not return successful time-window searches',
-                    area: locality,
-                    results: [],
-                    recentResults: [],
-                    historicalResults: [],
-                    successfulSearches: 0,
-                    filterVersion: 3,
-                    diagnostics: diagnostics
-                }, 502, corsOrigin);
-            }
-
-            try {
-                const cacheResponse = new Response(JSON.stringify(responseBody), {
-                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
-                });
-                ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-            } catch (_) {
-                // Search remains useful if edge caching is unavailable.
-            }
-            return jsonResponse(responseBody, 200, corsOrigin);
-        } catch (_) {
-            return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
-        }
-    }
-};
-, 'i')) ||
-        raw.match(new RegExp('^(' + monthAlternatives + ')\\s+(\\d{1,2}),?\\s+(\\d{4})
-
-    const normalized = raw.toLowerCase().trim();
-    if (/\b(today|just now|moments ago)\b/.test(normalized)) {
-        return { iso: new Date(now).toISOString(), dateMs: now, precision: 'relative-estimate', raw: raw, relativeLabel: 'approximately today' };
-    }
-    if (/\byesterday\b/.test(normalized)) {
-        const ms = now - 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: 1, relativeLabel: 'approximately 1 day ago' };
-    }
-    const relative = normalized.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
-    if (relative) {
-        const amount = Number(relative[1]);
-        const unit = relative[2];
-        const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
-            : /^hour|^hr/.test(unit) ? 1 / 24
-            : /^day/.test(unit) ? 1
-            : /^week|^wk/.test(unit) ? 7
-            : /^month|^mo/.test(unit) ? 30.4375
-            : 365.2425;
-        const ageDays = amount * multiplier;
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
-    }
-    const abbreviated = normalized.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
-    if (abbreviated) {
-        const unit = abbreviated[2];
-        const ageDays = Number(abbreviated[1]) * (/^d$/.test(unit) ? 1 : /^wk/.test(unit) ? 7 : /^mo/.test(unit) ? 30.4375 : 365.2425);
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
-    }
-    return null;
-}
-
-function extractEventDate(item, title, snippet, nowMs) {
-    const structured = item.eventDate || item.event_date || item.incidentDate || item.incident_date ||
-        item.occurredAt || item.occurred_at || item.eventTimestamp || item.incident_timestamp || null;
-    if (structured) {
-        const parsed = parseDateValue(structured, nowMs);
-        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-field-from-search-result' };
-    }
-    const text = String(title || '') + ' ' + String(snippet || '');
-    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
-    const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})';
-    const re = new RegExp('(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian pada|insiden pada)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')', 'i');
-    const match = text.match(re);
-    if (match) {
-        const parsed = parseDateValue(match[1], nowMs);
-        if (parsed) return { ...parsed, status: 'event-date-mentioned-in-summary' };
-    }
-    return null;
-}
-
-function formatAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
-    if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
-    const days = Math.max(0, ageDays);
-    const ageText = days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago'
-        : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago'
-        : (days / 365.2425).toFixed(1) + ' years ago';
-    if (basis === 'event-date') {
-        if (eventParsed && eventParsed.precision === 'relative-estimate') {
-            return 'Event age estimated from relative source wording; verify before relying on it';
-        }
-        return 'Event date in source metadata/text; approximately ' + ageText + ' · verify original report';
-    }
-    if (publicationParsed && publicationParsed.precision === 'relative-estimate') {
-        return 'Article appears published ' + (publicationParsed.relativeLabel || 'at a relative time') + '; event date unconfirmed';
-    }
-    return 'Article published ' + ageText + '; event date unconfirmed';
-}
-
-export default {
-    async fetch(request, env, ctx) {
-        const url = new URL(request.url);
-        const origin = request.headers.get('Origin') || '';
-        const allowedOrigins = String(env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
-            .split(',').map(function (value) { return value.trim(); }).filter(Boolean);
-        const isAllowedOrigin = !origin || allowedOrigins.indexOf(origin) >= 0;
-        const corsOrigin = origin && isAllowedOrigin ? origin : allowedOrigins[0];
-
-        if (!isAllowedOrigin) return jsonResponse({ error: 'Origin not allowed' }, 403, 'null');
-        if (request.method === 'OPTIONS') return new Response(null, {
-            status: 204,
-            headers: {
-                'Access-Control-Allow-Origin': corsOrigin,
-                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Max-Age': '86400',
-                'Vary': 'Origin'
-            }
-        });
-        if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
-        if (url.pathname !== '/nearby-intel') return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
-        if (!env.TINYFISH_API_KEY) return jsonResponse({ error: 'Worker secret TINYFISH_API_KEY is not configured' }, 503, corsOrigin);
-
-        const rawLat = Number(url.searchParams.get('lat'));
-        const rawLng = Number(url.searchParams.get('lng'));
-        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng) ||
-            rawLat < -90 || rawLat > 90 || rawLng < -180 || rawLng > 180) {
-            return jsonResponse({ error: 'Valid lat and lng query parameters are required' }, 400, corsOrigin);
-        }
-
-        // Round coordinates before reverse-geocoding. TinyFish receives only the resulting locality,
-        // not the user's exact GPS coordinates.
-        const lat = Math.round(rawLat * 100) / 100;
-        const lng = Math.round(rawLng * 100) / 100;
-        const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v2?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
-        const cache = caches.default;
-        try {
-            const cached = await cache.match(cacheKey);
-            if (cached) {
-                const body = await cached.json();
-                return jsonResponse(body, 200, corsOrigin);
-            }
-        } catch (_) {
-            // Cache is an optimization; continue with live search when unavailable.
-        }
-
-        let locality = lat.toFixed(2) + ', ' + lng.toFixed(2);
-        try {
-            const reverseUrl = new URL('https://nominatim.openstreetmap.org/reverse');
-            reverseUrl.searchParams.set('format', 'jsonv2');
-            reverseUrl.searchParams.set('lat', String(lat));
-            reverseUrl.searchParams.set('lon', String(lng));
-            reverseUrl.searchParams.set('zoom', '10');
-            reverseUrl.searchParams.set('addressdetails', '1');
-            const reverseResponse = await fetch(reverseUrl.toString(), {
-                headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'CivilAegisSafetyRadar/1.0'
-                }
-            });
-            if (reverseResponse.ok) {
-                const reversePayload = await reverseResponse.json();
-                locality = getLocality(reversePayload.address, locality);
-            }
-        } catch (_) {
-            // Keep rounded coordinates as a broad-area fallback.
-        }
-
-        const localityTerms = getLocalitySearchTerms(locality);
-        const baseQuery = 'Find specific public-safety incidents that explicitly happened in ' + locality + ' in Indonesia. Search Indonesian and English-language local reporting using terms including pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, riot, fatal clash, pickpocketing, robbery, scam, card fraud and road accident. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Only return articles that explicitly mention ' + locality + ' or its municipality name and describe an incident in that locality. Do not return generic crime-statistics pages, research/reference pages, incidents in other countries, or national/global trends not tied to the searched city. Include source links, dates, reported location and status when available. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
-        const timeWindows = [
-            { label: 'recent-30-days', query: 'published or occurred within the last 30 days', maxAgeDays: 30 },
-            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago', maxAgeDays: 730 },
-            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago', maxAgeDays: 1826 }
-        ];
-
-        try {
-            const gathered = [];
-            const seen = new Set();
-            let successfulSearches = 0;
-            let rawResultCount = 0;
-            const diagnostics = {
-                rejectedNonLocalCount: 0,
-                rejectedGenericReferenceCount: 0,
-                rejectedNoSourceUrlCount: 0,
-                duplicateCount: 0,
-                rejectedOutsideFiveYearWindowCount: 0,
-                dateUnconfirmedCount: 0,
-                relativePublicationDateCount: 0,
-                eventDateCount: 0,
-                cityMentionCount: 0,
-                nationalContextCount: 0
-            };
-            const nowMs = Date.now();
-            const oneDayMs = 86400000;
-            for (const window of timeWindows) {
-                const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
-                    '. This label records the search pass only; do not substitute the search pass for an incident date. ' +
-                    'Return separate fields for article publication date and incident/event date if possible. Include the precise city or district only when the source states it.';
-                const searchUrl = new URL('https://api.search.tinyfish.ai/');
-                searchUrl.searchParams.set('query', scopedQuery);
-                const searchResponse = await fetch(searchUrl.toString(), {
-                    headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' }
-                });
-                if (!searchResponse.ok) continue;
-                successfulSearches += 1;
-                const payload = await searchResponse.json();
-                const rawRows = extractResults(payload);
-                rawResultCount += rawRows.length;
-                rawRows.forEach(function (item) {
-                    const targetUrl = item.url || item.link || item.href || '';
-                    if (!/^https?:\/\//i.test(targetUrl)) {
-                        diagnostics.rejectedNoSourceUrlCount += 1;
-                        return;
-                    }
-                    const locationAssessment = assessIncidentLocation(item, localityTerms);
-                    if (!locationAssessment.accepted) {
-                        diagnostics.rejectedNonLocalCount += 1;
-                        if (locationAssessment.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
-                        return;
-                    }
-                    diagnostics.cityMentionCount += 1;
-                    if (locationAssessment.scope === 'national-context') diagnostics.nationalContextCount += 1;
-
-                    const key = targetUrl.toLowerCase();
-                    if (seen.has(key)) {
-                        diagnostics.duplicateCount += 1;
-                        return;
-                    }
-
-                    const title = String(item.title || item.name || 'Local public-safety report');
-                    const snippet = String(item.snippet || item.description || item.content || '');
-                    const text = (title + ' ' + snippet).toLowerCase();
-                    let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(text)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(text)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(text)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(text)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(text)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(text)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(text)) category = 'disaster';
-
-                    const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
-                    const publicationParsed = parseDateValue(publicationRaw, nowMs);
-                    const eventParsed = extractEventDate(item, title, snippet, nowMs);
-                    const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / oneDayMs) : null;
-                    const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / oneDayMs) : null;
-                    const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
-                    const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
-                    const timelineBucket = timelineAgeDays === null ? 'undated'
-                        : timelineAgeDays <= 30 ? 'recent-30-days'
-                        : timelineAgeDays <= 730.5 ? 'history-30-days-to-2-years'
-                        : timelineAgeDays <= 1826.25 ? 'history-2-to-5-years'
-                        : 'outside-5-year-window';
-
-                    // The incident date takes precedence over publication date. If we only know
-                    // publication age, describe the item as dated coverage, not as a dated incident.
-                    if (timelineBucket === 'outside-5-year-window') {
-                        diagnostics.rejectedOutsideFiveYearWindowCount += 1;
-                        return;
-                    }
-                    if (!eventParsed && !publicationParsed) diagnostics.dateUnconfirmedCount += 1;
-                    if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
-                    if (eventParsed) diagnostics.eventDateCount += 1;
-
-                    seen.add(key);
-                    let source = '';
-                    try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
-                    const explicitEventLocation = item.eventLocation || item.event_location || item.incidentLocation || item.incident_location || null;
-                    const scopeText = locationAssessment.scope === 'national-context'
-                        ? 'National or multi-location context; not a confirmed incident point in this city'
-                        : locationAssessment.scope === 'city-mentioned-location-unverified'
-                            ? 'City linked to the report; exact place not independently confirmed'
-                            : 'City is mentioned; the specific event location is unclear';
-                    const articlePublishedAt = publicationParsed && publicationParsed.precision !== 'relative-estimate'
-                        ? publicationParsed.iso : null;
-                    const publicationDateLabel = publicationParsed
-                        ? (publicationParsed.precision === 'relative-estimate'
-                            ? 'Publication age estimated from source wording: ' + publicationParsed.relativeLabel
-                            : 'Article published ' + publicationParsed.iso.slice(0, 10))
-                        : 'Publication date unconfirmed';
-                    const eventDateLabel = eventParsed
-                        ? (eventParsed.precision === 'relative-estimate'
-                            ? 'Event date estimated from relative source wording; verify'
-                            : 'Event date mentioned/supplied by search result: ' + eventParsed.iso.slice(0, 10))
-                        : 'Event date unconfirmed';
-                    const recencyLabel = formatAgeLabel(
-                        timelineAgeDays,
-                        timelineBasis,
-                        publicationParsed,
-                        eventParsed
-                    );
-                    gathered.push({
-                        id: key,
-                        title: title,
-                        snippet: snippet,
-                        url: targetUrl,
-                        source: source || 'TinyFish Search',
-                        area: locality,
-                        searchArea: locality,
-                        radiusType: 'municipality/city/regency',
-                        publishedAt: articlePublishedAt,
-                        publishedAtRaw: publicationRaw === null ? null : String(publicationRaw),
-                        publicationDateLabel: publicationDateLabel,
-                        publicationDatePrecision: publicationParsed ? publicationParsed.precision : 'unconfirmed',
-                        publicationAgeDays: publicationAgeDays,
-                        eventDate: eventParsed ? eventParsed.iso : null,
-                        eventDatePrecision: eventParsed ? eventParsed.precision : 'unconfirmed',
-                        eventDateStatus: eventParsed ? eventParsed.status : 'event-date-unconfirmed',
-                        eventDateLabel: eventDateLabel,
-                        eventAgeDays: eventAgeDays,
-                        ageYears: timelineAgeDays === null ? null : timelineAgeDays / 365.2425,
-                        timelineAgeDays: timelineAgeDays,
-                        timelineBasis: timelineBasis,
-                        timelineBucket: timelineBucket,
-                        timelineLabel: recencyLabel,
-                        recencyLabel: recencyLabel,
-                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? publicationParsed.precision === 'relative-estimate' ? 'Relative publication age estimate; event date unconfirmed' : 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
-                        searchWindow: window.label,
-                        category: category,
-                        eventLocation: explicitEventLocation ? String(explicitEventLocation) : null,
-                        eventLocationScope: locationAssessment.scope,
-                        eventLocationStatus: locationAssessment.status,
-                        locationEvidence: locationAssessment.reason,
-                        verified: false
-                    });
-                });
-            }
-
-            const recentResults = [];
-            const mediumTermResults = [];
-            const longTermResults = [];
-            const undatedResults = [];
-            gathered.forEach(function (item) {
-                if (item.timelineBucket === 'recent-30-days') recentResults.push(item);
-                else if (item.timelineBucket === 'history-30-days-to-2-years') mediumTermResults.push(item);
-                else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
-                else if (item.timelineBucket === 'undated') undatedResults.push(item);
-            });
-
-            const responseBody = {
-                area: locality,
-                searchArea: locality,
-                radiusType: 'municipality/city/regency',
-                generatedAt: new Date().toISOString(),
-                successfulSearches: successfulSearches,
-                filterVersion: 3,
-                rawResultCount: rawResultCount,
-                diagnostics: diagnostics,
-                recentResults: recentResults.slice(0, 8),
-                mediumTermResults: mediumTermResults.slice(0, 8),
-                longTermResults: longTermResults.slice(0, 8),
-                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
-                undatedResults: undatedResults.slice(0, 8),
-                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event date and publication date are tracked separately. If only publication date is available, the timeline bucket describes when the article was published, not when the incident happened. City mention is not precise geolocation. TinyFish results are unverified search leads; review the original source before making safety decisions.'
-            };
-
-            if (!successfulSearches) {
-                return jsonResponse({
-                    error: 'TinyFish Search did not return successful time-window searches',
-                    area: locality,
-                    results: [],
-                    recentResults: [],
-                    historicalResults: [],
-                    successfulSearches: 0,
-                    filterVersion: 3,
-                    diagnostics: diagnostics
-                }, 502, corsOrigin);
-            }
-
-            try {
-                const cacheResponse = new Response(JSON.stringify(responseBody), {
-                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
-                });
-                ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-            } catch (_) {
-                // Search remains useful if edge caching is unavailable.
-            }
-            return jsonResponse(responseBody, 200, corsOrigin);
-        } catch (_) {
-            return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
-        }
-    }
-};
-, 'i'));
-    if (localDateMatch) {
-        let day, monthName, year;
-        if (/^\\d/.test(localDateMatch[1])) {
-            day = Number(localDateMatch[1]); monthName = localDateMatch[2].toLowerCase(); year = Number(localDateMatch[3]);
-        } else {
-            monthName = localDateMatch[1].toLowerCase(); day = Number(localDateMatch[2]); year = Number(localDateMatch[3]);
-        }
-        const month = monthNames[monthName];
+    const monthAlternation = 'January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember';
+    const dayFirst = raw.match(new RegExp('^(\\d{1,2})\\s+(' + monthAlternation + ')\\s+(\\d{4})$', 'i'));
+    const monthFirst = raw.match(new RegExp('^(' + monthAlternation + ')\\s+(\\d{1,2}),?\\s+(\\d{4})$', 'i'));
+    if (dayFirst || monthFirst) {
+        const m = dayFirst || monthFirst;
+        const day = Number(dayFirst ? m[1] : m[2]);
+        const monthName = (dayFirst ? m[2] : m[1]).toLowerCase();
+        const year = Number(dayFirst ? m[3] : m[3]);
+        const month = monthNumbers[monthName];
         if (month !== undefined && day >= 1 && day <= 31) {
             const parsed = new Date(Date.UTC(year, month, day));
-            if (parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month && parsed.getUTCDate() === day && parsed.getTime() <= now + 86400000) {
+            if (parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month && parsed.getUTCDate() === day && parsed.getTime() <= now + DAY_MS) {
                 return { iso: parsed.toISOString(), dateMs: parsed.getTime(), precision: 'absolute-date', raw: raw };
             }
         }
     }
-    const absoluteMs = Date.parse(raw);
-    if (raw && Number.isFinite(absoluteMs) && absoluteMs > 0 && absoluteMs <= now + 86400000) {
-        return { iso: new Date(absoluteMs).toISOString(), dateMs: absoluteMs, precision: 'absolute-date', raw: raw };
-    }
 
-    const normalized = raw.toLowerCase().trim();
-    if (/\b(today|just now|moments ago)\b/.test(normalized)) {
-        return { iso: new Date(now).toISOString(), dateMs: now, precision: 'relative-estimate', raw: raw, relativeLabel: 'approximately today' };
-    }
-    if (/\byesterday\b/.test(normalized)) {
-        const ms = now - 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: 1, relativeLabel: 'approximately 1 day ago' };
-    }
-    const relative = normalized.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
-    if (relative) {
-        const amount = Number(relative[1]);
-        const unit = relative[2];
-        const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
-            : /^hour|^hr/.test(unit) ? 1 / 24
-            : /^day/.test(unit) ? 1
-            : /^week|^wk/.test(unit) ? 7
-            : /^month|^mo/.test(unit) ? 30.4375
-            : 365.2425;
-        const ageDays = amount * multiplier;
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
-    }
-    const abbreviated = normalized.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
-    if (abbreviated) {
-        const unit = abbreviated[2];
-        const ageDays = Number(abbreviated[1]) * (/^d$/.test(unit) ? 1 : /^wk/.test(unit) ? 7 : /^mo/.test(unit) ? 30.4375 : 365.2425);
-        const ms = now - ageDays * 86400000;
-        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
+    const absoluteMs = Date.parse(raw);
+    if (raw && Number.isFinite(absoluteMs) && absoluteMs > 0 && absoluteMs <= now + DAY_MS) {
+        return { iso: new Date(absoluteMs).toISOString(), dateMs: absoluteMs, precision: 'absolute-date', raw: raw };
     }
     return null;
 }
@@ -928,83 +175,82 @@ function extractEventDate(item, title, snippet, nowMs) {
         const parsed = parseDateValue(structured, nowMs);
         if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-field-from-search-result' };
     }
+
     const text = String(title || '') + ' ' + String(snippet || '');
-    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
+    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember)';
     const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})';
-    const re = new RegExp('(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian pada|insiden pada)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')', 'i');
-    const match = text.match(re);
+    const cue = '(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian terjadi|peristiwa terjadi|insiden terjadi)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')';
+    const match = text.match(new RegExp(cue, 'i'));
     if (match) {
         const parsed = parseDateValue(match[1], nowMs);
-        if (parsed) return { ...parsed, status: 'event-date-mentioned-in-summary' };
+        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-mentioned-in-summary' };
     }
     return null;
 }
 
-function formatAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
+function makeAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
     if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
     const days = Math.max(0, ageDays);
-    const ageText = days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago'
+    const ago = days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago'
         : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago'
         : (days / 365.2425).toFixed(1) + ' years ago';
     if (basis === 'event-date') {
-        if (eventParsed && eventParsed.precision === 'relative-estimate') {
-            return 'Event age estimated from relative source wording; verify before relying on it';
-        }
-        return 'Event date in source metadata/text; approximately ' + ageText + ' · verify original report';
+        if (eventParsed && eventParsed.precision === 'relative-estimate') return 'Event age estimated from relative source wording; verify original source';
+        return 'Event date stated in result; approximately ' + ago + ' · verify original source';
     }
     if (publicationParsed && publicationParsed.precision === 'relative-estimate') {
         return 'Article appears published ' + (publicationParsed.relativeLabel || 'at a relative time') + '; event date unconfirmed';
     }
-    return 'Article published ' + ageText + '; event date unconfirmed';
+    return 'Article published ' + ago + '; event date unconfirmed';
+}
+
+function bucketForAge(ageDays) {
+    if (!Number.isFinite(ageDays)) return 'undated';
+    if (ageDays < 0) return 'undated';
+    if (ageDays <= 30) return 'recent-30-days';
+    if (ageDays <= 730.5) return 'history-30-days-to-2-years';
+    if (ageDays <= FIVE_YEARS_DAYS) return 'history-2-to-5-years';
+    return 'outside-5-year-window';
 }
 
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const origin = request.headers.get('Origin') || '';
-        const allowedOrigins = String(env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
-            .split(',').map(function (value) { return value.trim(); }).filter(Boolean);
-        const isAllowedOrigin = !origin || allowedOrigins.indexOf(origin) >= 0;
+        const allowedOrigins = String(env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS).split(',').map(value => value.trim()).filter(Boolean);
+        const isAllowedOrigin = !origin || allowedOrigins.includes(origin);
         const corsOrigin = origin && isAllowedOrigin ? origin : allowedOrigins[0];
 
         if (!isAllowedOrigin) return jsonResponse({ error: 'Origin not allowed' }, 403, 'null');
-        if (request.method === 'OPTIONS') return new Response(null, {
-            status: 204,
-            headers: {
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { status: 204, headers: {
                 'Access-Control-Allow-Origin': corsOrigin,
                 'Access-Control-Allow-Methods': 'GET, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type',
                 'Access-Control-Max-Age': '86400',
                 'Vary': 'Origin'
-            }
-        });
+            }});
+        }
         if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
         if (url.pathname !== '/nearby-intel') return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
         if (!env.TINYFISH_API_KEY) return jsonResponse({ error: 'Worker secret TINYFISH_API_KEY is not configured' }, 503, corsOrigin);
 
         const rawLat = Number(url.searchParams.get('lat'));
         const rawLng = Number(url.searchParams.get('lng'));
-        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng) ||
-            rawLat < -90 || rawLat > 90 || rawLng < -180 || rawLng > 180) {
+        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng) || rawLat < -90 || rawLat > 90 || rawLng < -180 || rawLng > 180) {
             return jsonResponse({ error: 'Valid lat and lng query parameters are required' }, 400, corsOrigin);
         }
 
-        // Round coordinates before reverse-geocoding. TinyFish receives only the resulting locality,
-        // not the user's exact GPS coordinates.
+        // Round coordinates before reverse geocoding; exact GPS coordinates are never sent to TinyFish.
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v2?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v3?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
-            if (cached) {
-                const body = await cached.json();
-                return jsonResponse(body, 200, corsOrigin);
-            }
-        } catch (_) {
-            // Cache is an optimization; continue with live search when unavailable.
-        }
+            if (cached) return jsonResponse(await cached.json(), 200, corsOrigin);
+        } catch (_) {}
 
         let locality = lat.toFixed(2) + ', ' + lng.toFixed(2);
         try {
@@ -1015,25 +261,21 @@ export default {
             reverseUrl.searchParams.set('zoom', '10');
             reverseUrl.searchParams.set('addressdetails', '1');
             const reverseResponse = await fetch(reverseUrl.toString(), {
-                headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'CivilAegisSafetyRadar/1.0'
-                }
+                headers: { 'Accept': 'application/json', 'User-Agent': 'CivilAegisSafetyRadar/1.0' }
             });
             if (reverseResponse.ok) {
                 const reversePayload = await reverseResponse.json();
                 locality = getLocality(reversePayload.address, locality);
             }
-        } catch (_) {
-            // Keep rounded coordinates as a broad-area fallback.
-        }
+        } catch (_) {}
 
         const localityTerms = getLocalitySearchTerms(locality);
-        const baseQuery = 'Find specific public-safety incidents that explicitly happened in ' + locality + ' in Indonesia. Search Indonesian and English-language local reporting using terms including pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, riot, fatal clash, pickpocketing, robbery, scam, card fraud and road accident. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Only return articles that explicitly mention ' + locality + ' or its municipality name and describe an incident in that locality. Do not return generic crime-statistics pages, research/reference pages, incidents in other countries, or national/global trends not tied to the searched city. Include source links, dates, reported location and status when available. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
+        const baseQuery = 'Find specific public-safety incidents reported in or relevant to ' + locality + ', Indonesia. Search Indonesian and English-language local reporting for pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, rape, riot, fatal clash, pickpocketing, robbery, scam, card fraud, road accident and other public-safety events. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Include separate publication date and incident/event date if available, the reported location, fatalities/injuries if reported, and the original source URL. Distinguish a city-specific incident from national/multi-location coverage. Do not return generic crime statistics, research-reference pages, incidents in unrelated countries, or invented events.';
+
         const timeWindows = [
-            { label: 'recent-30-days', query: 'published or occurred within the last 30 days', maxAgeDays: 30 },
-            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago', maxAgeDays: 730 },
-            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago', maxAgeDays: 1826 }
+            { label: 'recent-30-days', query: 'published or occurred within the last 30 days' },
+            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago' },
+            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago' }
         ];
 
         try {
@@ -1054,11 +296,10 @@ export default {
                 nationalContextCount: 0
             };
             const nowMs = Date.now();
-            const oneDayMs = 86400000;
+
             for (const window of timeWindows) {
                 const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
-                    '. This label records the search pass only; do not substitute the search pass for an incident date. ' +
-                    'Return separate fields for article publication date and incident/event date if possible. Include the precise city or district only when the source states it.';
+                    '. This is a search-pass label only; do not assume the search window equals the incident date. Return publication and event dates separately if available.';
                 const searchUrl = new URL('https://api.search.tinyfish.ai/');
                 searchUrl.searchParams.set('query', scopedQuery);
                 const searchResponse = await fetch(searchUrl.toString(), {
@@ -1067,22 +308,22 @@ export default {
                 if (!searchResponse.ok) continue;
                 successfulSearches += 1;
                 const payload = await searchResponse.json();
-                const rawRows = extractResults(payload);
-                rawResultCount += rawRows.length;
-                rawRows.forEach(function (item) {
+                const rows = extractResults(payload);
+                rawResultCount += rows.length;
+
+                rows.forEach(function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
                     if (!/^https?:\/\//i.test(targetUrl)) {
                         diagnostics.rejectedNoSourceUrlCount += 1;
                         return;
                     }
-                    const locationAssessment = assessIncidentLocation(item, localityTerms);
-                    if (!locationAssessment.accepted) {
+
+                    const location = assessIncidentLocation(item, localityTerms);
+                    if (!location.accepted) {
                         diagnostics.rejectedNonLocalCount += 1;
-                        if (locationAssessment.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
+                        if (location.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
                         return;
                     }
-                    diagnostics.cityMentionCount += 1;
-                    if (locationAssessment.scope === 'national-context') diagnostics.nationalContextCount += 1;
 
                     const key = targetUrl.toLowerCase();
                     if (seen.has(key)) {
@@ -1092,66 +333,50 @@ export default {
 
                     const title = String(item.title || item.name || 'Local public-safety report');
                     const snippet = String(item.snippet || item.description || item.content || '');
-                    const text = (title + ' ' + snippet).toLowerCase();
+                    const combined = (title + ' ' + snippet).toLowerCase();
                     let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(text)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(text)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(text)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(text)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(text)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(text)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(text)) category = 'disaster';
+                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(combined)) category = 'sexual_violence';
+                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(combined)) category = 'homicide_or_fatality';
+                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(combined)) category = 'unrest';
+                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(combined)) category = 'theft';
+                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(combined)) category = 'scam_or_fraud';
+                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(combined)) category = 'road_accident';
+                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(combined)) category = 'disaster';
 
                     const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
                     const publicationParsed = parseDateValue(publicationRaw, nowMs);
                     const eventParsed = extractEventDate(item, title, snippet, nowMs);
-                    const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / oneDayMs) : null;
-                    const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / oneDayMs) : null;
+                    const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / DAY_MS) : null;
+                    const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / DAY_MS) : null;
                     const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
                     const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
-                    const timelineBucket = timelineAgeDays === null ? 'undated'
-                        : timelineAgeDays <= 30 ? 'recent-30-days'
-                        : timelineAgeDays <= 730.5 ? 'history-30-days-to-2-years'
-                        : timelineAgeDays <= 1826.25 ? 'history-2-to-5-years'
-                        : 'outside-5-year-window';
-
-                    // The incident date takes precedence over publication date. If we only know
-                    // publication age, describe the item as dated coverage, not as a dated incident.
+                    const timelineBucket = bucketForAge(timelineAgeDays);
                     if (timelineBucket === 'outside-5-year-window') {
                         diagnostics.rejectedOutsideFiveYearWindowCount += 1;
                         return;
                     }
-                    if (!eventParsed && !publicationParsed) diagnostics.dateUnconfirmedCount += 1;
+                    if (timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
                     if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
                     if (eventParsed) diagnostics.eventDateCount += 1;
-
+                    diagnostics.cityMentionCount += 1;
+                    if (location.scope === 'national-context') diagnostics.nationalContextCount += 1;
                     seen.add(key);
+
                     let source = '';
                     try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
-                    const explicitEventLocation = item.eventLocation || item.event_location || item.incidentLocation || item.incident_location || null;
-                    const scopeText = locationAssessment.scope === 'national-context'
-                        ? 'National or multi-location context; not a confirmed incident point in this city'
-                        : locationAssessment.scope === 'city-mentioned-location-unverified'
-                            ? 'City linked to the report; exact place not independently confirmed'
-                            : 'City is mentioned; the specific event location is unclear';
-                    const articlePublishedAt = publicationParsed && publicationParsed.precision !== 'relative-estimate'
-                        ? publicationParsed.iso : null;
+                    const explicitLocation = item.eventLocation || item.event_location || item.incidentLocation || item.incident_location || null;
                     const publicationDateLabel = publicationParsed
                         ? (publicationParsed.precision === 'relative-estimate'
-                            ? 'Publication age estimated from source wording: ' + publicationParsed.relativeLabel
-                            : 'Article published ' + publicationParsed.iso.slice(0, 10))
+                            ? 'Publication age estimated: ' + (publicationParsed.relativeLabel || 'relative source date') + '; event date unconfirmed'
+                            : 'Article published ' + publicationParsed.iso.slice(0, 10) + '; event date unconfirmed')
                         : 'Publication date unconfirmed';
                     const eventDateLabel = eventParsed
                         ? (eventParsed.precision === 'relative-estimate'
-                            ? 'Event date estimated from relative source wording; verify'
-                            : 'Event date mentioned/supplied by search result: ' + eventParsed.iso.slice(0, 10))
+                            ? 'Event age estimated from relative source wording; verify'
+                            : 'Event date supplied or mentioned: ' + eventParsed.iso.slice(0, 10) + '; verify original source')
                         : 'Event date unconfirmed';
-                    const recencyLabel = formatAgeLabel(
-                        timelineAgeDays,
-                        timelineBasis,
-                        publicationParsed,
-                        eventParsed
-                    );
+                    const timelineLabel = makeAgeLabel(timelineAgeDays, timelineBasis, publicationParsed, eventParsed);
+
                     gathered.push({
                         id: key,
                         title: title,
@@ -1161,7 +386,7 @@ export default {
                         area: locality,
                         searchArea: locality,
                         radiusType: 'municipality/city/regency',
-                        publishedAt: articlePublishedAt,
+                        publishedAt: publicationParsed && publicationParsed.precision !== 'relative-estimate' ? publicationParsed.iso : null,
                         publishedAtRaw: publicationRaw === null ? null : String(publicationRaw),
                         publicationDateLabel: publicationDateLabel,
                         publicationDatePrecision: publicationParsed ? publicationParsed.precision : 'unconfirmed',
@@ -1175,15 +400,15 @@ export default {
                         timelineAgeDays: timelineAgeDays,
                         timelineBasis: timelineBasis,
                         timelineBucket: timelineBucket,
-                        timelineLabel: recencyLabel,
-                        recencyLabel: recencyLabel,
-                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? publicationParsed.precision === 'relative-estimate' ? 'Relative publication age estimate; event date unconfirmed' : 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
+                        timelineLabel: timelineLabel,
+                        recencyLabel: timelineLabel,
+                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
                         searchWindow: window.label,
                         category: category,
-                        eventLocation: explicitEventLocation ? String(explicitEventLocation) : null,
-                        eventLocationScope: locationAssessment.scope,
-                        eventLocationStatus: locationAssessment.status,
-                        locationEvidence: locationAssessment.reason,
+                        eventLocation: explicitLocation ? String(explicitLocation) : null,
+                        eventLocationScope: location.scope,
+                        eventLocationStatus: location.status,
+                        locationEvidence: location.reason,
                         verified: false
                     });
                 });
@@ -1215,33 +440,20 @@ export default {
                 historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
                 undatedResults: undatedResults.slice(0, 8),
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event date and publication date are tracked separately. If only publication date is available, the timeline bucket describes when the article was published, not when the incident happened. City mention is not precise geolocation. TinyFish results are unverified search leads; review the original source before making safety decisions.'
+                note: 'Event and publication dates are separate. If only publication age is known, the timeline bucket describes the article date, not the event date. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
-
             if (!successfulSearches) {
-                return jsonResponse({
-                    error: 'TinyFish Search did not return successful time-window searches',
-                    area: locality,
-                    results: [],
-                    recentResults: [],
-                    historicalResults: [],
-                    successfulSearches: 0,
-                    filterVersion: 3,
-                    diagnostics: diagnostics
-                }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 3, diagnostics: diagnostics }, 502, corsOrigin);
             }
-
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
                     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
                 });
                 ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-            } catch (_) {
-                // Search remains useful if edge caching is unavailable.
-            }
+            } catch (_) {}
             return jsonResponse(responseBody, 200, corsOrigin);
-        } catch (_) {
-            return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
+        } catch (error) {
+            return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', detail: String(error && error.message || error), area: locality, results: [] }, 502, corsOrigin);
         }
     }
 };
