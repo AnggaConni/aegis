@@ -455,8 +455,8 @@
         function saveSafetySnapshot() {
             const snapshot = {
                 savedAt: new Date().toISOString(),
-                incidents: incidents.slice(0, 800),
-                routeHazardCandidates: routeHazardCandidates.slice(0, 4000),
+                incidents: incidents.slice(0, 400),
+                routeHazardCandidates: routeHazardCandidates.slice(0, 1200),
                 webIntel: webIntel.slice(-40)
             };
             if (writeStoredJson(SAFETY_SNAPSHOT_KEY, snapshot)) {
@@ -1261,7 +1261,7 @@
                 title.textContent = inc.title || 'Incident report';
                 const meta = document.createElement('span');
                 meta.className = 'radar-intel-meta block';
-                meta.textContent = (inc.timeText || 'Time unavailable') + ' · ' + Number(inc.dist).toFixed(1) + ' km · ' + (inc.sourceName || typeInfo.source);
+                meta.textContent = (inc.cachedLocal ? 'CACHED · ' : '') + (inc.timeText || 'Time unavailable') + ' · ' + Number(inc.dist).toFixed(1) + ' km · ' + (inc.sourceName || typeInfo.source);
                 textWrap.appendChild(title);
                 textWrap.appendChild(meta);
                 item.appendChild(icon);
@@ -1643,7 +1643,6 @@
             document.getElementById('route-summary').classList.remove('hidden');
             document.getElementById('route-summary-main').textContent = formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' estimated driving';
             document.getElementById('route-summary-meta').textContent = route.warnings.length + ' mapped report(s) within ' + formatRouteDistance(routeBufferMeters) + ' of route · ' + routeDestinationLabel;
-            const journeyEndpoints = getActiveJourneyEndpoints();
             const googleUrl = new URL('https://www.google.com/maps/dir/');
             googleUrl.searchParams.set('api', '1');
             googleUrl.searchParams.set('origin', journeyEndpoints.start.lat + ',' + journeyEndpoints.start.lng);
@@ -1698,7 +1697,7 @@
                 title.textContent = inc.title || 'Nearby hazard report';
                 const meta = document.createElement('span');
                 meta.className = 'route-warning-meta';
-                meta.textContent = formatRouteDistance(entry.distance) + ' from route · ' + (inc.sourceName || (INCIDENT_TYPES[inc.type] || {}).source || 'Unknown source') + ' · ' + (inc.timeText || 'Time unknown');
+                meta.textContent = formatRouteDistance(entry.distance) + ' from route · ' + (inc.cachedLocal ? 'CACHED · ' : '') + (inc.sourceName || (INCIDENT_TYPES[inc.type] || {}).source || 'Unknown source') + ' · ' + (inc.timeText || 'Time unknown');
                 button.appendChild(title);
                 button.appendChild(meta);
                 button.addEventListener('click', () => openIncidentSheet(inc));
@@ -1803,6 +1802,8 @@
             activeJourneyLeg = 'outbound';
             routePlanOrigin = null;
             try { localStorage.removeItem(JOURNEY_PLAN_KEY); } catch (_) {}
+            routeOptions = [];
+            selectedRouteIndex = 0;
             updateJourneyControls();
             updateOfflinePlanNote();
             routeOptions = [];
@@ -1827,6 +1828,7 @@
 
         function routeToIncident() {
             if (!currentSelectedIncident || !Number.isFinite(Number(currentSelectedIncident.lat)) || !Number.isFinite(Number(currentSelectedIncident.lng))) return;
+            setJourneyMode('oneway');
             const destination = currentSelectedIncident;
             document.getElementById('route-destination').value = destination.title || destination.lat + ', ' + destination.lng;
             calculateRouteToCoordinates(Number(destination.lat), Number(destination.lng), destination.title || 'Selected incident');
@@ -1938,7 +1940,7 @@
                     <p class="incident-desc text-xs text-slate-500 mt-1.5 line-clamp-2 leading-relaxed break-words"></p>
                     <div class="flex items-center gap-3 mt-3 text-[10px] font-medium text-slate-400 truncate">
                         <span class="flex items-center gap-1 shrink-0"><i class="fa-solid fa-location-arrow"></i> ${dist} km</span>
-                        <span class="flex items-center gap-1 truncate"><i class="fa-solid fa-satellite"></i> ${inc.sourceName || typeInfo.source}</span>
+                        <span class="flex items-center gap-1 truncate"><i class="fa-solid fa-satellite"></i> ${inc.cachedLocal ? 'Cached · ' : ''}${inc.sourceName || typeInfo.source}</span>
                     </div>
                 </div>`;
             div.querySelector('h3').textContent = inc.title;
