@@ -1487,6 +1487,7 @@
 
         function classifySafetyText(value) {
             const text = String(value || '').toLowerCase();
+            if (/(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)/.test(text)) return 'explosion_or_blast';
             if (/(flood|flooding|flash flood|inundat|banjir|waterlogged|waterlogging)/.test(text)) return 'flood';
             if (/(road accident|traffic accident|vehicle crash|car crash|motorcycle crash|collision|hit.and.run|crash reported|traffic incident|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun)/.test(text)) return 'accident';
             if (/(fire|building blaze|burning building|smoke plume|kebakaran)/.test(text)) return 'fire';
@@ -1626,11 +1627,12 @@
             let summary = 'No specific local theft, accident, or hazard signal was matched in the currently available data. This does not mean the area is safe.';
             let facilities = ['police', 'hospital'];
 
-            if (category === 'theft' || category === 'violence' || category === 'crime' || category === 'sexual_violence' || category === 'homicide' || category === 'unrest') {
+            if (category === 'theft' || category === 'violence' || category === 'crime' || category === 'sexual_violence' || category === 'homicide' || category === 'unrest' || category === 'explosion_or_blast') {
                 heading = category === 'theft' ? 'Theft or pickpocketing awareness'
                     : category === 'sexual_violence' ? 'Sexual-violence awareness'
                     : category === 'homicide' ? 'Homicide or fatal-incident awareness'
                     : category === 'unrest' ? 'Public unrest or violent-clash awareness'
+                    : category === 'explosion_or_blast' ? 'Explosion or blast awareness'
                     : category === 'violence' ? 'Violence-related awareness' : 'Crime-related awareness';
                 summary = signal.kind === 'web'
                     ? getWebSignalRecommendationContext(signal.item)
@@ -1641,6 +1643,10 @@
                     tips.push('When practical, choose well-lit, populated routes and avoid isolated shortcuts, especially when travelling alone at night.');
                     tips.push('Share your trip or arrival time with a trusted contact if that helps you feel safer. You do not owe anyone an explanation for changing your route.');
                     tips.push('If you feel followed or threatened, enter a staffed public place and contact local emergency services or police. Do not confront the person.');
+                } else if (category === 'explosion_or_blast') {
+                    tips.push('This source is undated. Do not treat it as evidence of an active incident; open the original report and check current official updates.');
+                    tips.push('If an explosion is currently reported nearby, move away from the affected area and follow police and emergency-service instructions.');
+                    tips.push('Do not touch suspicious objects or debris. From a safe place, contact local emergency services if there is an active threat.');
                 } else if (category === 'homicide' || category === 'unrest') {
                     tips.push('Check the date, exact reported location, and current official updates. A historical case does not mean the area is currently dangerous.');
                     tips.push('Avoid active crowds, confrontations, or police cordons if unrest is reported now; follow local authority instructions.');
