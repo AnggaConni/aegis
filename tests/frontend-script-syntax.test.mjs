@@ -29,3 +29,14 @@ test('frontend merges combined and bucket feeds and removes duplicate rows', () 
   assert.match(html, /const seenRows = new Set\(\)/);
   assert.match(html, /if \(!stableKey \|\| seenRows\.has\(stableKey\)\) return false/);
 });
+
+
+test('mobile map collapse control and glowing current-position marker are present', () => {
+  assert.match(html, /id="mobile-map-toggle"/);
+  assert.match(html, /function toggleMobileMap\(\)/);
+  assert.match(html, /#radar-top-layout\.map-collapsed\s*\{\s*grid-template-rows:\s*54px auto;/);
+  assert.match(html, /\.gps-user-marker::before/);
+  assert.match(html, /@keyframes gps-location-wave/);
+  assert.match(html, /function createUserLocationIcon\(\)/);
+  assert.match(html, /userMarker\.setIcon\(createUserLocationIcon\(\)\)/);
+});
