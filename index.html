@@ -470,6 +470,8 @@
             if (!routePlanOrigin || !routeDestination || !routeOptions.length) return false;
             const routesForPlan = journeyPlan && journeyPlan.routes ? journeyPlan.routes : {};
             routesForPlan[activeJourneyLeg] = routeOptions;
+            const selectedIndexes = journeyPlan && journeyPlan.selectedIndexes ? journeyPlan.selectedIndexes : { outbound: 0, return: 0 };
+            selectedIndexes[activeJourneyLeg] = selectedRouteIndex;
             journeyPlan = {
                 version: 1,
                 mode: journeyMode,
@@ -478,6 +480,7 @@
                 destinationLabel: routeDestinationLabel,
                 activeLeg: activeJourneyLeg,
                 routes: routesForPlan,
+                selectedIndexes: selectedIndexes,
                 savedAt: new Date().toISOString(),
                 alertRadiusMeters: routeBufferMeters
             };
@@ -1364,45 +1367,155 @@
             }
         }
 
+        async function requestDrivingRoutes(startPoint, endPoint) {
+            const endpoint = 'https://router.project-osrm.org/route/v1/driving/' +
+                Number(startPoint.lng) + ',' + Number(startPoint.lat) + ';' +
+                Number(endPoint.lng) + ',' + Number(endPoint.lat) +
+                '?overview=full&geometries=geojson&steps=true&alternatives=true';
+            const response = await fetchWithTimeout(endpoint, { headers: { 'Accept': 'application/json' } }, 20000);
+            if (!response.ok) throw new Error('Routing service HTTP ' + response.status);
+            const payload = await response.json();
+            if (payload.code !== 'Ok' || !Array.isArray(payload.routes) || !payload.routes.length) {
+                throw new Error('No driving route found for this leg.');
+            }
+            return payload.routes.slice(0, 3).map((route, index) => ({
+                index: index,
+                geometry: route.geometry,
+                distance: Number(route.distance || 0),
+                duration: Number(route.duration || 0),
+                legs: route.legs || [],
+                warnings: getRouteWarnings(route.geometry.coordinates)
+            }));
+        }
+
+        function setJourneyMode(mode) {
+            journeyMode = mode === 'roundtrip' ? 'roundtrip' : 'oneway';
+            activeJourneyLeg = 'outbound';
+            updateJourneyControls();
+            if (journeyPlan && journeyPlan.routes) {
+                journeyPlan.mode = journeyMode;
+                journeyPlan.activeLeg = activeJourneyLeg;
+                if (journeyMode === 'oneway') {
+                    routeOptions = journeyPlan.routes.outbound || routeOptions;
+                    saveJourneyPlan();
+                }
+            }
+            setRouteStatus(journeyMode === 'roundtrip'
+                ? 'Round trip selected. Press Route to save both PERGI and PULANG legs on this device.'
+                : 'One-way selected. Press Route to calculate and save the outbound leg.', 'neutral');
+        }
+
+        function switchJourneyLeg(leg) {
+            if (journeyMode !== 'roundtrip') {
+                setRouteStatus('Select Round trip (PP) to switch between PERGI and PULANG.', 'warning');
+                return;
+            }
+            const requestedLeg = leg === 'return' ? 'return' : 'outbound';
+            const savedRoutes = journeyPlan && journeyPlan.routes ? journeyPlan.routes : {};
+            const routes = savedRoutes[requestedLeg];
+            if (!Array.isArray(routes) || !routes.length) {
+                setRouteStatus('The ' + (requestedLeg === 'return' ? 'PULANG' : 'PERGI') + ' route is not saved yet. Connect to the internet and calculate the round trip first.', 'warning');
+                return;
+            }
+            activeJourneyLeg = requestedLeg;
+            routeOptions = routes;
+            selectedRouteIndex = Math.min(Number(savedPlanRouteIndex(requestedLeg)) || 0, Math.max(0, routes.length - 1));
+            routePlanOrigin = journeyPlan.origin;
+            routeDestination = journeyPlan.destination;
+            routeDestinationLabel = journeyPlan.destinationLabel || 'Destination';
+            updateJourneyControls();
+            updateOfflinePlanNote();
+            applyRouteOption(selectedRouteIndex, true);
+            if (navigator.onLine) {
+                const destinationPoint = getActiveJourneyEndpoints().end;
+                fetchRouteWeather(destinationPoint.lat, destinationPoint.lng, requestedLeg === 'return' ? 'return destination' : routeDestinationLabel);
+                setRouteStatus('Showing saved ' + (requestedLeg === 'return' ? 'PULANG' : 'PERGI') + ' route. Refresh reports when data is available.', 'ok');
+            } else {
+                setRouteStatus('Offline: showing saved ' + (requestedLeg === 'return' ? 'PULANG' : 'PERGI') + ' route and steps. Live alerts cannot refresh.', 'warning');
+            }
+            saveJourneyPlan();
+        }
+
+        function savedPlanRouteIndex(leg) {
+            return journeyPlan && journeyPlan.selectedIndexes ? journeyPlan.selectedIndexes[leg] : 0;
+        }
+
+        function getActiveJourneyEndpoints() {
+            if (journeyPlan && journeyPlan.origin && journeyPlan.destination) {
+                return activeJourneyLeg === 'return'
+                    ? { start: journeyPlan.destination, end: journeyPlan.origin }
+                    : { start: journeyPlan.origin, end: journeyPlan.destination };
+            }
+            const origin = routePlanOrigin || userLocation;
+            return { start: origin, end: routeDestination || origin };
+        }
+
         async function calculateRouteToCoordinates(destLat, destLng, label) {
-            if (usingFallbackLocation) return setRouteStatus('GPS unavailable. Enable current-location access before routing.', 'error');
+            if (usingFallbackLocation) {
+                setRouteStatus('GPS unavailable. A new route cannot be calculated without current location. You can still open a previously saved plan offline.', 'error');
+                return;
+            }
             if (routeBusy) return;
             routeBusy = true;
             selectingRouteDestination = false;
             document.getElementById('route-go').disabled = true;
-            setRouteStatus('Calculating driving route and checking mapped hazards…', 'neutral');
-            if (routeLayer) map.removeLayer(routeLayer);
-            if (routeStartMarker) map.removeLayer(routeStartMarker);
-            if (routeEndMarker) map.removeLayer(routeEndMarker);
-            routeLayer = routeStartMarker = routeEndMarker = null;
-            document.getElementById('route-summary').classList.add('hidden');
-            document.getElementById('route-alternatives').innerHTML = '';
-            document.getElementById('route-alerts').innerHTML = '';
-            document.getElementById('route-steps').innerHTML = '';
-            routeOptions = [];
-            routeWarnings = [];
-            routeDestination = { lat: Number(destLat), lng: Number(destLng) };
+            setRouteStatus(journeyMode === 'roundtrip'
+                ? 'Calculating both legs and checking nearby hazard reports…'
+                : 'Calculating route and checking nearby hazard reports…', 'neutral');
+
+            const origin = { lat: Number(userLocation.lat), lng: Number(userLocation.lng) };
+            const destination = { lat: Number(destLat), lng: Number(destLng) };
+            routePlanOrigin = origin;
+            routeDestination = destination;
             routeDestinationLabel = label || 'Destination';
+
             try {
-                const endpoint = 'https://router.project-osrm.org/route/v1/driving/' +
-                    userLocation.lng + ',' + userLocation.lat + ';' + routeDestination.lng + ',' + routeDestination.lat +
-                    '?overview=full&geometries=geojson&steps=true&alternatives=true';
-                const response = await fetchWithTimeout(endpoint, { headers: { 'Accept': 'application/json' } });
-                if (!response.ok) throw new Error('Routing service HTTP ' + response.status);
-                const payload = await response.json();
-                if (payload.code !== 'Ok' || !Array.isArray(payload.routes) || !payload.routes.length) throw new Error('No driving route found. Try a different destination.');
-                routeOptions = payload.routes.slice(0, 3).map((route, index) => ({
-                    index: index, geometry: route.geometry, distance: Number(route.distance || 0),
-                    duration: Number(route.duration || 0), legs: route.legs || [],
-                    warnings: getRouteWarnings(route.geometry.coordinates)
-                }));
+                const outboundRoutes = await requestDrivingRoutes(origin, destination);
+                let returnRoutes = [];
+                if (journeyMode === 'roundtrip') {
+                    setRouteStatus('PERGI route ready. Calculating PULANG route…', 'neutral');
+                    returnRoutes = await requestDrivingRoutes(destination, origin);
+                }
+
+                journeyPlan = {
+                    version: 1,
+                    mode: journeyMode,
+                    origin: origin,
+                    destination: destination,
+                    destinationLabel: routeDestinationLabel,
+                    routes: { outbound: outboundRoutes, return: returnRoutes },
+                    selectedIndexes: { outbound: 0, return: 0 },
+                    activeLeg: 'outbound',
+                    savedAt: new Date().toISOString(),
+                    alertRadiusMeters: routeBufferMeters
+                };
+                activeJourneyLeg = 'outbound';
+                routeOptions = outboundRoutes;
                 selectedRouteIndex = 0;
+                updateJourneyControls();
+                saveJourneyPlan();
+
+                if (routeLayer) map.removeLayer(routeLayer);
+                if (routeStartMarker) map.removeLayer(routeStartMarker);
+                if (routeEndMarker) map.removeLayer(routeEndMarker);
+                routeLayer = routeStartMarker = routeEndMarker = null;
+                document.getElementById('route-summary').classList.add('hidden');
+                document.getElementById('route-alternatives').innerHTML = '';
+                document.getElementById('route-alerts').innerHTML = '';
+                document.getElementById('route-steps').innerHTML = '';
+
                 applyRouteOption(0, true);
-                fetchRouteWeather(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
-                fetchTinyFishIntel(routeDestination.lat, routeDestination.lng, routeDestinationLabel, true);
+                if (typeof fetchRouteWeather === 'function') {
+                    fetchRouteWeather(destination.lat, destination.lng, routeDestinationLabel);
+                }
+                fetchTinyFishIntel(destination.lat, destination.lng, routeDestinationLabel, true);
+
+                setRouteStatus(journeyMode === 'roundtrip'
+                    ? 'Both legs calculated and saved locally. Use PERGI/PULANG tabs to switch routes without recalculating.'
+                    : 'Route calculated and saved locally. You can reopen it without signal.', 'ok');
             } catch (error) {
                 console.warn('Route calculation failed:', error);
-                setRouteStatus((error.message || 'Route calculation failed.') + ' The free OSRM demo can be rate-limited or unavailable.', 'error');
+                setRouteStatus((error.message || 'Route calculation failed.') + ' Public routing may be rate-limited.', 'error');
             } finally {
                 routeBusy = false;
                 document.getElementById('route-go').disabled = false;
@@ -1518,21 +1631,23 @@
             }).addTo(map);
             if (routeStartMarker) map.removeLayer(routeStartMarker);
             if (routeEndMarker) map.removeLayer(routeEndMarker);
-            routeStartMarker = L.circleMarker([userLocation.lat, userLocation.lng], {
+            const journeyEndpoints = getActiveJourneyEndpoints();
+            routeStartMarker = L.circleMarker([journeyEndpoints.start.lat, journeyEndpoints.start.lng], {
                 radius: 7, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1
-            }).bindPopup('Route origin · current GPS location').addTo(map);
-            routeEndMarker = L.marker([routeDestination.lat, routeDestination.lng], { title: 'Route destination' })
-                .bindTooltip(routeDestinationLabel || 'Destination').addTo(map);
+            }).bindPopup((activeJourneyLeg === 'return' ? 'PULANG origin · saved destination' : 'PERGI origin · saved starting point')).addTo(map);
+            routeEndMarker = L.marker([journeyEndpoints.end.lat, journeyEndpoints.end.lng], { title: 'Route destination' })
+                .bindTooltip(activeJourneyLeg === 'return' ? 'PULANG · original starting point' : (routeDestinationLabel || 'Destination')).addTo(map);
             if (markersLayer && markersLayer.eachLayer) markersLayer.eachLayer(layer => { if (layer.setZIndexOffset) layer.setZIndexOffset(700); });
             if (fitMap) map.fitBounds(routeLayer.getBounds(), { padding: [28, 28], maxZoom: 15 });
 
             document.getElementById('route-summary').classList.remove('hidden');
             document.getElementById('route-summary-main').textContent = formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' estimated driving';
             document.getElementById('route-summary-meta').textContent = route.warnings.length + ' mapped report(s) within ' + formatRouteDistance(routeBufferMeters) + ' of route · ' + routeDestinationLabel;
+            const journeyEndpoints = getActiveJourneyEndpoints();
             const googleUrl = new URL('https://www.google.com/maps/dir/');
             googleUrl.searchParams.set('api', '1');
-            googleUrl.searchParams.set('origin', userLocation.lat + ',' + userLocation.lng);
-            googleUrl.searchParams.set('destination', routeDestination.lat + ',' + routeDestination.lng);
+            googleUrl.searchParams.set('origin', journeyEndpoints.start.lat + ',' + journeyEndpoints.start.lng);
+            googleUrl.searchParams.set('destination', journeyEndpoints.end.lat + ',' + journeyEndpoints.end.lng);
             googleUrl.searchParams.set('travelmode', 'driving');
             document.getElementById('route-google-link').href = googleUrl.toString();
             renderRouteAlternatives();
@@ -1683,6 +1798,13 @@
 
         function clearRoute() {
             selectingRouteDestination = false;
+            journeyPlan = null;
+            journeyMode = 'oneway';
+            activeJourneyLeg = 'outbound';
+            routePlanOrigin = null;
+            try { localStorage.removeItem(JOURNEY_PLAN_KEY); } catch (_) {}
+            updateJourneyControls();
+            updateOfflinePlanNote();
             routeOptions = [];
             routeWarnings = [];
             routeDestination = null;
