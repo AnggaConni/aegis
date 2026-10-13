@@ -51,6 +51,41 @@ function normalizeForMatching(value) {
 }
 
 function getLocalitySearchTerms(locality) {
+    const firstPart = String(locality || '').split(',')[0].trim();
+    const municipality = firstPart
+        .replace(/^daerah khusus ibukota\s+/i, '')
+        .replace(/^daerah istimewa\s+/i, '')
+        .replace(/^(kota administrasi|kabupaten administrasi|kota|kabupaten|regency|municipality|city of|city|kab\.?|kot\.?|dki)\s+/i, '')
+        .trim();
+    const terms = [];
+    [municipality, firstPart].forEach(value => {
+        const normalized = normalizeForMatching(value);
+        if (normalized.length >= 4 && !terms.includes(normalized)) terms.push(normalized);
+    });
+    // Do not split a municipality into individual words; partial matches create false positives.
+    return terms.sort((a, b) => b.length - a.length);
+}
+
+function assessIncidentLocation(item, localityTerms) {
+    const title = String(item.title || item.name || '');
+    const snippet = String(item.snippet || item.description || item.content || '');
+    const url = String(item.url || item.link || item.href || '');
+    const contentText = title + ' ' + snippet;
+    const normalizedContent = normalizeForMatching(contentText);
+    const normalizedUrl = normalizeForMatching(url);
+    if (!localityTerms.length) return { accepted: false, reason: 'no-locality-term' };
+    const matchedTerm = localityTerms.find(term => normalizedContent.includes(term));
+    if (!matchedTerm) {
+        return { accepted: false, reason: localityTerms.some(term => normalizedUrl.includes(term)) ? 'city-in-url-only' : 'no-city-mention' };
+    }
+
+    const rawCombined = title + ' ' + snippet + ' ' + url;
+    const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(rawCombined);
+    const foreignGenericDomains = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
+    if (genericReference || foreignGenericDomains) return { accepted: false, reason: 'generic-or-foreign-reference' };
+
+    const nationalScale = /(nationwide|across indonesia|throughout indonesia|across the country|across the archipelago|several provinces|multiple provinces|multiple cities|nationwide unrest|nationwide protests|di seluruh indonesia|lintas provinsi|sejumlah daerah|berbagai daerah|kerusuhan nasional)/i.test(rawCombined);
+    const escaped = matchedTerm.replace(/[.*+?^$()|[\]\\]/g, '\\function getLocalitySearchTerms(locality) {
     const ignored = new Set(['indonesia', 'province', 'provinsi', 'java', 'jawa', 'west', 'east', 'central', 'barat', 'timur', 'tengah', 'utara', 'selatan']);
     const terms = [];
     const add = function (value) {
@@ -84,6 +119,95 @@ function isLocalIncidentResult(item, localityTerms) {
     const foreignGenericDomains = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
     if (genericReference || foreignGenericDomains) return false;
     return true;
+}').replace(/\s+/g, '\\s+');
+    const explicitLocalContext = new RegExp(
+        '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?' + escaped + '\\b|' +
+        '\\b' + escaped + '\\s+(?:attacks?|murders?|homicides?|rapes?|robberies|riots?|clashes|protests?|floods?|fires?|accidents?|pickpocketing|snatching|crime|kerusuhan|pembunuhan|pemerkosaan|pencopetan|penjambretan|kecelakaan|banjir|kebakaran)\\b)',
+        'i'
+    ).test(contentText);
+    const scope = nationalScale && !explicitLocalContext
+        ? 'national-context'
+        : explicitLocalContext
+            ? 'city-mentioned-location-unverified'
+            : 'city-mentioned-context-unclear';
+    const status = scope === 'national-context'
+        ? 'National or multi-location report; city is mentioned but exact incident locations are not confirmed.'
+        : scope === 'city-mentioned-location-unverified'
+            ? 'City is linked to the incident in the text; exact incident location has not been independently confirmed.'
+            : 'City is mentioned in the article, but the event location is unclear.';
+    return { accepted: true, reason: 'city-mentioned', scope: scope, status: status, matchedTerm: matchedTerm };
+}
+
+function parseDateValue(value, nowMs) {
+    if (value === null || value === undefined || value === '') return null;
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        const ms = value > 100000000000 ? value : value * 1000;
+        if (ms > 0 && ms <= now + 86400000) return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'absolute-timestamp', raw: value };
+    }
+    const raw = String(value).trim();
+    const absoluteMs = Date.parse(raw);
+    if (raw && Number.isFinite(absoluteMs) && absoluteMs > 0 && absoluteMs <= now + 86400000) {
+        return { iso: new Date(absoluteMs).toISOString(), dateMs: absoluteMs, precision: 'absolute-date', raw: raw };
+    }
+
+    const normalized = raw.toLowerCase().trim();
+    if (/\b(today|just now|moments ago)\b/.test(normalized)) {
+        return { iso: new Date(now).toISOString(), dateMs: now, precision: 'relative-estimate', raw: raw, relativeLabel: 'approximately today' };
+    }
+    if (/\byesterday\b/.test(normalized)) {
+        const ms = now - 86400000;
+        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: 1, relativeLabel: 'approximately 1 day ago' };
+    }
+    const relative = normalized.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
+    if (relative) {
+        const amount = Number(relative[1]);
+        const unit = relative[2];
+        const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
+            : /^hour|^hr/.test(unit) ? 1 / 24
+            : /^day/.test(unit) ? 1
+            : /^week|^wk/.test(unit) ? 7
+            : /^month|^mo/.test(unit) ? 30.4375
+            : 365.2425;
+        const ageDays = amount * multiplier;
+        const ms = now - ageDays * 86400000;
+        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
+    }
+    const abbreviated = normalized.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
+    if (abbreviated) {
+        const unit = abbreviated[2];
+        const ageDays = Number(abbreviated[1]) * (/^d$/.test(unit) ? 1 : /^wk/.test(unit) ? 7 : /^mo/.test(unit) ? 30.4375 : 365.2425);
+        const ms = now - ageDays * 86400000;
+        return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', raw: raw, ageDays: ageDays, relativeLabel: 'approximately ' + raw };
+    }
+    return null;
+}
+
+function extractEventDate(item, title, snippet, nowMs) {
+    const structured = item.eventDate || item.event_date || item.incidentDate || item.incident_date ||
+        item.occurredAt || item.occurred_at || item.eventTimestamp || item.incident_timestamp || null;
+    if (structured) {
+        const parsed = parseDateValue(structured, nowMs);
+        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-field-from-search-result' };
+    }
+    const text = String(title || '') + ' ' + String(snippet || '');
+    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
+    const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})';
+    const re = new RegExp('(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian pada|insiden pada)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')', 'i');
+    const match = text.match(re);
+    if (match) {
+        const parsed = parseDateValue(match[1], nowMs);
+        if (parsed) return { ...parsed, status: 'event-date-mentioned-in-summary' };
+    }
+    return null;
+}
+
+function formatAgeLabel(ageDays, basis, publicationPrecision) {
+    if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
+    const days = Math.max(0, ageDays);
+    if (basis === 'event-date') return 'Event date supplied; approximately ' + (days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago' : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago' : (days / 365.2425).toFixed(1) + ' years ago');
+    if (publicationPrecision === 'relative-estimate') return 'Publication age estimated from relative source wording; event date unconfirmed';
+    return 'Article published ' + (days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago' : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago' : (days / 365.2425).toFixed(1) + ' years ago') + '; event date unconfirmed';
 }
 
 export default {
