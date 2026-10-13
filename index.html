@@ -511,6 +511,7 @@
                 activeLeg: activeJourneyLeg,
                 routes: routesForPlan,
                 selectedIndexes: selectedIndexes,
+                weather: journeyPlan && journeyPlan.weather ? journeyPlan.weather : {},
                 savedAt: new Date().toISOString(),
                 alertRadiusMeters: routeBufferMeters
             };
@@ -726,8 +727,10 @@
                 document.getElementById('route-alert-radius').value = String(routeBufferMeters);
                 updateJourneyControls();
                 updateOfflinePlanNote();
+                displaySavedRouteWeather();
                 if (routeOptions.length) {
                     applyRouteOption(selectedRouteIndex, true);
+                    displaySavedRouteWeather();
                     setRouteStatus(navigator.onLine
                         ? 'Loaded saved trip plan. Refresh public feeds before departure.'
                         : 'Offline: loaded saved trip route and turn instructions. Live hazard checks are unavailable.', navigator.onLine ? 'ok' : 'warning');
@@ -1494,6 +1497,7 @@
             updateJourneyControls();
             updateOfflinePlanNote();
             applyRouteOption(selectedRouteIndex, true);
+            displaySavedRouteWeather();
             if (navigator.onLine) {
                 const destinationPoint = getActiveJourneyEndpoints().end;
                 fetchRouteWeather(destinationPoint.lat, destinationPoint.lng, requestedLeg === 'return' ? 'return destination' : routeDestinationLabel);
@@ -1552,6 +1556,7 @@
                     destinationLabel: routeDestinationLabel,
                     routes: { outbound: compactRouteOptions(outboundRoutes), return: [] },
                     selectedIndexes: { outbound: 0, return: 0 },
+                    weather: {},
                     activeLeg: 'outbound',
                     savedAt: new Date().toISOString(),
                     alertRadiusMeters: routeBufferMeters
@@ -1817,8 +1822,22 @@
             });
         }
 
+        function displaySavedRouteWeather() {
+            const panel = document.getElementById('route-weather');
+            if (!panel) return;
+            const cache = journeyPlan && journeyPlan.weather ? journeyPlan.weather[activeJourneyLeg] : null;
+            if (!cache || !cache.text) {
+                if (!panel.textContent.startsWith('Checking weather')) panel.textContent = '';
+                return;
+            }
+            const stamp = cache.fetchedAt ? new Date(cache.fetchedAt) : null;
+            const updated = stamp && !Number.isNaN(stamp.getTime()) ? ' Saved forecast: ' + stamp.toLocaleString() + '.' : '';
+            panel.textContent = cache.text + updated + (navigator.onLine ? ' Stored context; refresh before departure.' : ' Offline copy; may be stale and is not a flood warning.');
+        }
+
         async function fetchRouteWeather(lat, lng, placeLabel) {
             const panel = document.getElementById('route-weather');
+            const requestedLeg = activeJourneyLeg;
             panel.textContent = 'Checking weather forecast at destination…';
             updateSourceStatus('weather', 'Checking…', 'neutral');
             try {
@@ -1854,12 +1873,22 @@
                 const rainText = totalRain.toFixed(1) + ' mm forecast over the next 6 hours';
                 const chanceText = maxChance === null ? '' : ' · rain chance up to ' + Math.round(maxChance) + '%';
                 const windText = maxWind === null ? '' : ' · wind up to ' + Math.round(maxWind) + ' km/h';
-                panel.textContent = 'Weather at ' + (placeLabel || 'destination') + ': ' + rainText + chanceText + windText +
+                const text = 'Weather at ' + (placeLabel || 'destination') + ': ' + rainText + chanceText + windText +
                     '. Forecast context only—not a flood, road-closure, or evacuation warning. Source: Open-Meteo.';
+                if (journeyPlan) {
+                    journeyPlan.weather = journeyPlan.weather || {};
+                    journeyPlan.weather[requestedLeg] = { text: text, fetchedAt: new Date().toISOString(), label: placeLabel || 'destination' };
+                    saveJourneyPlan();
+                }
+                if (requestedLeg === activeJourneyLeg) displaySavedRouteWeather();
                 updateSourceStatus('weather', 'Loaded · forecast', 'ok');
             } catch (error) {
                 console.warn('Weather forecast failed:', error);
-                panel.textContent = 'Weather forecast unavailable. Check BMKG/local weather warnings before travelling.';
+                if (!displaySavedRouteWeather || !(journeyPlan && journeyPlan.weather && journeyPlan.weather[requestedLeg])) {
+                    panel.textContent = 'Weather forecast unavailable. Check BMKG/local weather warnings before travelling.';
+                } else if (requestedLeg === activeJourneyLeg) {
+                    displaySavedRouteWeather();
+                }
                 updateSourceStatus('weather', 'Unavailable', 'error');
             }
         }
