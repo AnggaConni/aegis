@@ -558,14 +558,23 @@ function extractEventDateFromSourceText(title, snippet, bodyText, nowMs, publica
     const sexualFocus = /\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(focus);
     const theftFocus = /\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan)\b/.test(focus);
     const accidentFocus = /\b(road incident|traffic accident|crash|run over|collision|kecelakaan|tabrakan)\b/.test(focus);
+    const unrestFocus = /\b(riot|unrest|clash|clashes|protest|protests|demonstration|demonstrations|kerusuhan|bentrokan|tawuran|unjuk rasa|demonstrasi)\b/.test(focus);
     const eventCue = /\b(occurred|happened|took place|was killed|were killed|died|was run over|were run over|was attacked|were attacked|was shot|were shot|was stabbed|were stabbed|was raped|was robbed|was assaulted|terjadi|tewas|meninggal|menewaskan|dibunuh|ditabrak|diserang|ditembak|dibacok)\b/i;
 
     const sentences = String(bodyText || '').split(/(?<=[.!?])\s+/).slice(0, 260);
     for (const sentence of sentences) {
-        if (!/\b(?:19|20)\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember)\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b/i.test(sentence)) continue;
+        if (isSeriesStartDateSentence(sentence)) continue;
+        if (!/\b(?:19|20)\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b|\b(?:today|yesterday|\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\s+ago|on\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))\b/i.test(sentence)) continue;
         if (!eventCue.test(sentence)) continue;
         const normalizedSentence = normalize(sentence);
-        if (fatalFocus && !/\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|victim|run over|menewaskan|korban tewas|meninggal|tewas|dibunuh|ditabrak)\b/.test(normalizedSentence)) continue;
+        const matchingIncidentContext =
+            (fatalFocus && /\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|victim|run over|menewaskan|korban tewas|meninggal|tewas|dibunuh|ditabrak)\b/.test(normalizedSentence)) ||
+            (explosionFocus && /\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(normalizedSentence)) ||
+            (sexualFocus && /\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(normalizedSentence)) ||
+            (theftFocus && /\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan|stole|stolen|robbed)\b/.test(normalizedSentence)) ||
+            (accidentFocus && /\b(road incident|traffic accident|crash|run over|collision|kecelakaan|tabrakan|vehicle)\b/.test(normalizedSentence)) ||
+            (unrestFocus && /\b(riot|unrest|clash|clashes|protest|protests|demonstration|demonstrations|kerusuhan|bentrokan|tawuran|unjuk rasa|demonstrasi)\b/.test(normalizedSentence));
+        if ((fatalFocus || explosionFocus || sexualFocus || theftFocus || accidentFocus || unrestFocus) && !matchingIncidentContext) continue;
         if (explosionFocus && !/\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(normalizedSentence)) continue;
         if (sexualFocus && !/\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(normalizedSentence)) continue;
         if (theftFocus && !/\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan|stole|stolen|robbed)\b/.test(normalizedSentence)) continue;
