@@ -832,6 +832,7 @@
                     fetchTinyFishIntel(userLocation.lat, userLocation.lng, 'Current location'),
                     fetchCrimeApi(userLocation.lat, userLocation.lng)
                 ]);
+                saveSafetySnapshot();
                 renderMapMarkers();
                 renderAwarenessOverview();
                 renderSafetyRecommendations();
@@ -1419,6 +1420,238 @@
                 tripCopy.textContent = journeyPlan.mode === 'roundtrip'
                     ? 'Saved round-trip plan: ' + (journeyPlan.destinationLabel || 'destination') + '.'
                     : 'Saved route: ' + (journeyPlan.destinationLabel || 'destination') + '.';
+            }
+            renderPersonalizedRecommendation();
+        }
+
+        function classifySafetyText(value) {
+            const text = String(value || '').toLowerCase();
+            if (/(flood|flooding|flash flood|inundat|banjir|waterlogged|waterlogging)/.test(text)) return 'flood';
+            if (/(road accident|traffic accident|vehicle crash|car crash|motorcycle crash|collision|hit.and.run|crash reported|traffic incident)/.test(text)) return 'accident';
+            if (/(fire|building blaze|burning building|smoke plume)/.test(text)) return 'fire';
+            if (/(earthquake|aftershock|seismic)/.test(text)) return 'earthquake';
+            if (/(carding|card skimm|atm skimm|credit.card fraud|debit.card fraud|payment fraud|banking fraud|phishing|financial scam|online scam)/.test(text)) return 'fraud';
+            if (/(pickpocket|pick pocket|snatch theft|phone snatching|bag snatching|mugging|robbery|robbed|theft|stolen phone|stolen wallet|burglary|shoplifting)/.test(text)) return 'theft';
+            if (/(assault|stabbing|violent attack|street violence|sexual assault|shooting|armed attack)/.test(text)) return 'violence';
+            if (/(crime|criminal|police investigation|suspect arrested|public order)/.test(text)) return 'crime';
+            return 'general';
+        }
+
+        function getRecommendationSignal() {
+            const hazards = currentNearbyHazards(10);
+            // Immediate environmental hazards take priority over theft/media signals.
+            const priorityHazard = hazards.find(item => ['flood', 'fire_event', 'earthquake', 'global_disaster', 'volcano'].includes(item.type));
+            if (priorityHazard) {
+                const category = priorityHazard.type === 'fire_event' ? 'fire'
+                    : priorityHazard.type === 'earthquake' ? 'earthquake'
+                    : priorityHazard.type === 'flood' ? 'flood'
+                    : classifySafetyText(priorityHazard.title + ' ' + priorityHazard.desc);
+                return { category: category, item: priorityHazard, kind: 'mapped', confidence: 'Mapped hazard report' };
+            }
+
+            const localWebSignals = webIntel.filter(article =>
+                !article.contextLabel || /current location|nearby|current area/i.test(article.contextLabel)
+            );
+            const relevantArticle = localWebSignals.find(article =>
+                classifySafetyText(article.title + ' ' + article.snippet) !== 'general'
+            );
+            if (relevantArticle) {
+                return {
+                    category: classifySafetyText(relevantArticle.title + ' ' + relevantArticle.snippet),
+                    item: relevantArticle,
+                    kind: 'web',
+                    confidence: 'Unverified local news/search signal'
+                };
+            }
+
+            const recordedCrime = incidents.find(item => item.type === 'crime');
+            if (recordedCrime) {
+                return {
+                    category: classifySafetyText(recordedCrime.title + ' ' + recordedCrime.desc),
+                    item: recordedCrime,
+                    kind: 'crimeApi',
+                    confidence: 'Historical, approximate police data'
+                };
+            }
+
+            const accidentNews = localWebSignals.find(article => classifySafetyText(article.title + ' ' + article.snippet) === 'accident');
+            if (accidentNews) return { category: 'accident', item: accidentNews, kind: 'web', confidence: 'Unverified local news/search signal' };
+            return null;
+        }
+
+        function getNearestMappedFacility(types) {
+            return incidents
+                .filter(item => types.includes(item.type) &&
+                    Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)))
+                .map(item => ({
+                    item: item,
+                    distance: calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng))
+                }))
+                .sort((a, b) => a.distance - b.distance)[0] || null;
+        }
+
+        function appendNearestFacilityRow(container, candidate, label) {
+            if (!candidate) return false;
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-2 justify-between border-t border-slate-100 pt-2 text-[10px]';
+            const copy = document.createElement('div');
+            copy.className = 'min-w-0 flex-1';
+            const name = document.createElement('p');
+            name.className = 'font-bold text-slate-700 truncate';
+            name.textContent = label + ': ' + (candidate.item.title || candidate.item.name || 'Mapped facility');
+            const distance = document.createElement('p');
+            distance.className = 'text-slate-500 mt-0.5';
+            distance.textContent = candidate.distance.toFixed(1) + ' km from your current location · OpenStreetMap mapped facility, availability not confirmed';
+            copy.appendChild(name);
+            copy.appendChild(distance);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'awareness-action';
+            button.textContent = 'View on map';
+            button.addEventListener('click', () => {
+                setSafetyMode('awareness');
+                switchTab('radar');
+                openIncidentSheet(candidate.item);
+            });
+            row.appendChild(copy);
+            row.appendChild(button);
+            container.appendChild(row);
+            return true;
+        }
+
+        function renderPersonalizedRecommendation() {
+            const container = document.getElementById('personalized-recommendation');
+            if (!container) return;
+            const titleNode = document.getElementById('personal-rec-title');
+            const tagNode = document.getElementById('personal-rec-tag');
+            const copyNode = document.getElementById('personal-rec-copy');
+            const tipsNode = document.getElementById('personal-rec-tips');
+            const evidenceNode = document.getElementById('personal-rec-evidence');
+            const servicesNode = document.getElementById('personal-rec-services');
+            if (!titleNode || !tagNode || !copyNode || !tipsNode || !evidenceNode || !servicesNode) return;
+
+            const signal = getRecommendationSignal();
+            const title = signal && signal.item ? String(signal.item.title || '') : '';
+            const category = signal ? signal.category : 'general';
+            const tips = [];
+            let heading = 'Everyday safety check';
+            let summary = 'No specific local theft, accident, or hazard signal was matched in the currently available data. This does not mean the area is safe.';
+            let facilities = ['police', 'hospital'];
+
+            if (category === 'theft' || category === 'violence' || category === 'crime') {
+                heading = category === 'theft' ? 'Theft or pickpocketing signal' : category === 'violence' ? 'Violence-related signal' : 'Crime-related signal';
+                summary = signal.kind === 'web'
+                    ? 'TinyFish returned a local search result mentioning ' + category + '. Treat this as an unverified lead, not a confirmed crime alert.'
+                    : signal.kind === 'crimeApi'
+                        ? 'Police open data contains a recorded crime near this point. UK street-level locations are approximate and the records are historical, not real-time alerts.'
+                        : 'A mapped crime-related report is available. Check the source, timestamp, and precise area before acting.';
+                tips.push('Move toward a staffed, well-lit public place if you feel unsafe. Do not confront or chase a suspected offender.');
+                tips.push('Keep your phone and wallet secured in a zipped or inside pocket; avoid displaying valuables in a crowd.');
+                tips.push('If a phone or payment card is stolen, lock the device/card, contact your bank through its official channel, and report the incident to local police.');
+                facilities = ['police'];
+                if (category === 'fraud') {
+                    heading = 'Payment-card fraud or skimming signal';
+                    tips.unshift('Do not share your PIN, CVV, banking password, or one-time code. Lock the card and contact your bank immediately if a transaction is suspicious.');
+                }
+            } else if (category === 'fraud') {
+                heading = 'Payment-card fraud or skimming signal';
+                summary = signal.kind === 'web'
+                    ? 'A local search result mentions card fraud or skimming. The report is unverified; use it as a prompt to protect your accounts, not as proof of a local attack.'
+                    : 'Fraud-related information is available. Verify the original source and protect your accounts.';
+                tips.push('Lock the card in your banking app and contact your bank through its official number if you see an unauthorised transaction.');
+                tips.push('Never share your PIN, CVV, banking password, or one-time passcode.');
+                tips.push('Preserve transaction notifications and report suspected fraud to your bank and local authorities.');
+                facilities = ['police'];
+            } else if (category === 'accident') {
+                heading = 'Road accident or collision signal';
+                summary = signal.kind === 'web'
+                    ? 'TinyFish returned a local news result mentioning an accident. The exact incident location and current road conditions are not confirmed.'
+                    : 'A nearby accident-related report is available. Check the original source and road conditions before travelling.';
+                tips.push('Keep yourself out of moving traffic and move to a safe roadside location if you can do so without crossing danger.');
+                tips.push('Contact local emergency services. Give the location, number of people injured, and visible hazards.');
+                tips.push('Do not move a seriously injured person unless there is an immediate danger such as fire or oncoming traffic.');
+                tips.push('Do not stop in a live traffic lane to watch or take photographs; follow police and responder instructions.');
+                facilities = ['hospital', 'police', 'fire_station'];
+            } else if (category === 'flood') {
+                heading = 'Flood report may affect nearby travel';
+                summary = signal.kind === 'web'
+                    ? 'A local search result mentions flooding, but water depth and road access are not confirmed.'
+                    : 'A mapped flood or disaster report is available nearby. Check its time and official local updates.';
+                tips.push('Never walk, ride, or drive through floodwater. Depth, current, and hidden road damage can be hard to judge.');
+                tips.push('Avoid underpasses, river crossings, and low-lying roads. Move to higher ground if water is rising.');
+                tips.push('Follow local BPBD/emergency instructions. A nearby hospital or fire station is not automatically an evacuation centre.');
+                facilities = ['fire_station', 'hospital'];
+            } else if (category === 'fire') {
+                heading = 'Fire or smoke report nearby';
+                summary = 'A fire-related signal is available. Its exact status may have changed; check official updates.';
+                tips.push('Move away from smoke and the affected area; do not re-enter a building to collect belongings.');
+                tips.push('Use stairs rather than lifts when evacuating a building and follow emergency-service instructions.');
+                tips.push('Call local emergency services from a safe location.');
+                facilities = ['fire_station', 'hospital'];
+            } else if (category === 'earthquake' || category === 'volcano') {
+                heading = category === 'earthquake' ? 'Earthquake information nearby' : 'Volcanic hazard information';
+                summary = 'A mapped hazard signal is available. Confirm current advice with BMKG and local authorities.';
+                tips.push(category === 'earthquake' ? 'If shaking starts indoors, drop, cover, and hold on. After shaking, avoid damaged structures and downed power lines.' : 'Follow official exclusion zones and evacuation instructions; do not approach restricted areas.');
+                tips.push('Keep away from visibly damaged buildings, bridges, and utility lines.');
+                tips.push('Move to a verified safer place only when official guidance or the immediate situation requires it.');
+                facilities = ['hospital', 'police'];
+            } else {
+                tips.push('Keep your phone locked and hide sensitive notification previews on the lock screen.');
+                tips.push('Keep cards and valuables secured; enable bank transaction alerts and use the card lock feature if available.');
+                tips.push('Identify a staffed help point or exit when entering a crowded venue, and share your trip with a trusted contact when appropriate.');
+                if (!TINYFISH_PROXY_URL) {
+                    summary += ' Local news recommendations are limited because the TinyFish Worker is not connected yet.';
+                }
+                facilities = ['police', 'hospital'];
+            }
+
+            titleNode.textContent = heading;
+            tagNode.className = 'personalized-label';
+            tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' : signal.kind === 'web' ? 'VERIFY SOURCE' : 'MAPPED REPORT') : 'GENERAL';
+            if (signal && signal.kind === 'web') tagNode.classList.add('attention');
+            copyNode.textContent = summary;
+            tipsNode.innerHTML = '';
+            tips.slice(0, 4).forEach(tip => {
+                const li = document.createElement('li');
+                li.textContent = tip;
+                tipsNode.appendChild(li);
+            });
+
+            evidenceNode.textContent = signal
+                ? 'Signal: ' + (title || category) + ' · ' + (signal.item.area || signal.item.sourceName || signal.confidence || 'local source') +
+                    (signal.item.publishedAt ? ' · published ' + String(signal.item.publishedAt) : signal.item.timeText ? ' · ' + signal.item.timeText : '')
+                : 'Basis: current mapped reports and nearby facilities. No confirmed crime alert is available from a nationwide Indonesian open crime feed.';
+
+            servicesNode.innerHTML = '';
+            const nearestPolice = getNearestMappedFacility(['police']);
+            const nearestHospital = getNearestMappedFacility(['hospital']);
+            const nearestFire = getNearestMappedFacility(['fire_station']);
+            const shownTypes = new Set();
+            facilities.forEach(type => {
+                if (shownTypes.has(type)) return;
+                shownTypes.add(type);
+                const candidate = type === 'police' ? nearestPolice : type === 'hospital' ? nearestHospital : nearestFire;
+                const label = type === 'police' ? 'Nearest mapped police station' :
+                    type === 'hospital' ? 'Nearest mapped hospital' : 'Nearest mapped fire station';
+                if (!appendNearestFacilityRow(servicesNode, candidate, label)) {
+                    const missing = document.createElement('p');
+                    missing.className = 'text-[10px] text-slate-500 border-t border-slate-100 pt-2';
+                    missing.textContent = label + ': no facility was found in the currently loaded map data.';
+                    servicesNode.appendChild(missing);
+                }
+            });
+
+            if (signal && signal.kind === 'web' && signal.item.url) {
+                const linkRow = document.createElement('p');
+                linkRow.className = 'text-[10px] border-t border-slate-100 pt-2 mt-1';
+                const link = document.createElement('a');
+                link.href = signal.item.url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.className = 'text-blue-700 font-bold underline';
+                link.textContent = 'Open original news/search result ↗';
+                linkRow.appendChild(link);
+                servicesNode.appendChild(linkRow);
             }
         }
 
