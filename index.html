@@ -245,8 +245,8 @@
                             <div class="mt-1.5 mb-2">
                                 <p class="text-[10px] font-bold text-slate-600 mb-1.5">Trip plan</p>
                                 <div class="flex gap-1.5">
-                                    <button id="mode-oneway" class="journey-mode-btn active" type="button" onclick="setJourneyMode('oneway')"><i class="fa-solid fa-arrow-right mr-1"></i>One way</button>
-                                    <button id="mode-roundtrip" class="journey-mode-btn" type="button" onclick="setJourneyMode('roundtrip')"><i class="fa-solid fa-arrows-rotate mr-1"></i>Round trip (PP)</button>
+                                    <button id="mode-oneway" class="journey-mode-btn active" type="button" onclick="setJourneyMode('oneway')"><i class="fa-solid fa-arrow-right mr-1"></i>Sekali Jalan</button>
+                                    <button id="mode-roundtrip" class="journey-mode-btn" type="button" onclick="setJourneyMode('roundtrip')"><i class="fa-solid fa-arrows-rotate mr-1"></i>Pulang-Pergi (PP)</button>
                                 </div>
                                 <div id="journey-leg-controls" class="hidden flex gap-1.5 mt-1.5">
                                     <button id="leg-outbound" class="journey-leg-btn active" type="button" onclick="switchJourneyLeg('outbound')"><i class="fa-solid fa-arrow-right mr-1"></i>PERGI</button>
@@ -710,12 +710,21 @@
                         : 'Offline: loaded saved trip route and turn instructions. Live hazard checks are unavailable.', navigator.onLine ? 'ok' : 'warning');
                 }
             }
-            // Refresh in the background so an offline visit does not sit on a loading screen.
-            refreshSafetyFeeds();
+            // Do not tear down cached arrays while fully offline; the saved plan and warnings remain usable.
+            if (navigator.onLine) {
+                refreshSafetyFeeds();
+            } else {
+                setRouteStatus('Offline: showing saved trip/report data. Live alerts and new routing cannot refresh.', 'warning');
+            }
         }
 
         async function refreshSafetyFeeds() {
             if (safetyRefreshBusy || !map) return;
+            if (!navigator.onLine) {
+                setRouteStatus('Offline: saved routes and cached reports remain available; live feeds were not refreshed.', 'warning');
+                updateOfflinePlanNote();
+                return;
+            }
             safetyRefreshBusy = true;
             const button = document.getElementById('refresh-feeds-btn');
             if (button) {
@@ -1410,15 +1419,18 @@
             if (payload.code !== 'Ok' || !Array.isArray(payload.routes) || !payload.routes.length) {
                 throw new Error('No driving route found for this leg.');
             }
-            return payload.routes.slice(0, 3).map((route, index) => ({
-                index: index,
-                geometry: route.geometry,
-                distance: Number(route.distance || 0),
-                duration: Number(route.duration || 0),
-                legs: route.legs || [],
-                warnings: getRouteWarnings(route.geometry.coordinates),
-                warningCount: getRouteWarnings(route.geometry.coordinates).length
-            }));
+            return payload.routes.slice(0, 3).map((route, index) => {
+                const warnings = getRouteWarnings(route.geometry.coordinates);
+                return {
+                    index: index,
+                    geometry: route.geometry,
+                    distance: Number(route.distance || 0),
+                    duration: Number(route.duration || 0),
+                    legs: route.legs || [],
+                    warnings: warnings,
+                    warningCount: warnings.length
+                };
+            });
         }
 
         function setJourneyMode(mode) {
@@ -1656,6 +1668,7 @@
             selectedRouteIndex = index;
             const route = routeOptions[index];
             route.warnings = getRouteWarnings(route.geometry.coordinates);
+            route.warningCount = route.warnings.length;
             routeWarnings = route.warnings;
             if (routeLayer) map.removeLayer(routeLayer);
             routeLayer = L.geoJSON(route.geometry, {
