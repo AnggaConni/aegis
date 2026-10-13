@@ -90,6 +90,23 @@
         .marker-haze { background-color:#64748b; }
         .marker-wind { background-color:#0891b2; }
         .marker-disaster { background-color:#b45309; }
+        .route-planner { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin:0 0 10px; }
+        .route-input { width:100%; min-width:0; border:1px solid #cbd5e1; border-radius:9px; padding:9px 10px; font-size:11px; outline:none; background:#fff; color:#0f172a; }
+        .route-input:focus { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.12); }
+        .route-mini-btn { border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:7px 9px; font-size:10px; font-weight:700; }
+        .route-mini-btn.active { background:#dbeafe; color:#1d4ed8; border-color:#2563eb; }
+        .route-primary-btn { border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; padding:8px 11px; font-size:11px; font-weight:800; }
+        .route-status { font-size:10px; line-height:1.45; color:#64748b; margin-top:7px; }
+        .route-summary { background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:10px; margin-top:9px; }
+        .route-alt-btn { width:100%; text-align:left; padding:7px 8px; margin-top:5px; border:1px solid #cbd5e1; border-radius:8px; background:white; font-size:10px; color:#334155; }
+        .route-alt-btn.active { border-color:#2563eb; background:#dbeafe; color:#1d4ed8; font-weight:800; }
+        .route-step-list { max-height:165px; overflow:auto; margin-top:7px; }
+        .route-step { display:flex; align-items:flex-start; gap:8px; padding:7px 2px; border-bottom:1px solid #e2e8f0; font-size:10px; color:#334155; }
+        .route-step-index { width:20px; height:20px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; background:#e2e8f0; color:#334155; border-radius:50%; font-size:9px; font-weight:800; }
+        .route-warning { display:block; width:100%; text-align:left; margin-top:6px; padding:8px; border:1px solid #fecaca; border-radius:9px; background:#fff7f7; color:#991b1b; }
+        .route-warning-title { display:block; font-size:10px; font-weight:800; }
+        .route-warning-meta { display:block; font-size:9px; margin-top:3px; color:#7f1d1d; }
+        .route-warning-note { font-size:9px; line-height:1.45; color:#92400e; margin-top:7px; }
         .leaflet-control-attribution { font-size: 10px; background: rgba(255,255,255,0.88) !important; padding: 2px 5px !important; }
 
         @media (max-width: 800px) {
@@ -207,6 +224,39 @@
                             </div>
                             <span id="intel-count" class="bg-blue-50 text-blue-700 rounded-full px-2 py-1 text-[10px] font-bold">0 items</span>
                         </div>
+
+                        <section class="route-planner" aria-label="Route planner">
+                            <div class="flex items-center justify-between gap-2 mb-2">
+                                <p class="text-[11px] font-extrabold text-slate-900"><i class="fa-solid fa-route text-blue-600 mr-1"></i> Route Planner</p>
+                                <span class="text-[9px] font-bold text-blue-700 bg-blue-100 rounded px-2 py-1">DRIVING BETA</span>
+                            </div>
+                            <form onsubmit="event.preventDefault(); calculateRouteFromSearch();" class="flex gap-1.5">
+                                <input id="route-destination" class="route-input flex-1" type="search" placeholder="Destination or place name" aria-label="Destination" autocomplete="off" required>
+                                <button id="route-go" class="route-primary-btn" type="submit">Route</button>
+                            </form>
+                            <div class="flex gap-1.5 mt-1.5">
+                                <button id="pick-destination-btn" class="route-mini-btn flex-1" type="button" onclick="beginPickDestination()"><i class="fa-solid fa-location-crosshairs mr-1"></i>Pick on map</button>
+                                <button class="route-mini-btn" type="button" onclick="clearRoute()"><i class="fa-solid fa-xmark mr-1"></i>Clear</button>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 mt-2">
+                                <label for="route-alert-radius" class="text-[10px] text-slate-600 font-semibold">Alert radius from route</label>
+                                <select id="route-alert-radius" class="route-input" style="width:auto;padding:5px 7px" onchange="onRouteBufferChange()">
+                                    <option value="500">500 m</option>
+                                    <option value="1000" selected>1 km</option>
+                                    <option value="2000">2 km</option>
+                                </select>
+                            </div>
+                            <p id="route-status" class="route-status">Route planning requires GPS. Search runs only when you press Route; no autocomplete requests are sent.</p>
+                            <div id="route-summary" class="route-summary hidden">
+                                <div id="route-summary-main" class="text-sm font-extrabold text-blue-900"></div>
+                                <div id="route-summary-meta" class="text-[10px] text-blue-800 mt-1"></div>
+                                <a id="route-google-link" class="inline-block text-[10px] font-bold text-blue-700 underline mt-2" href="#" target="_blank" rel="noopener noreferrer">Open in Google Maps ↗</a>
+                            </div>
+                            <div id="route-alternatives" class="mt-1"></div>
+                            <div id="route-alerts" class="mt-2"></div>
+                            <div id="route-steps" class="route-step-list"></div>
+                        </section>
+
                         <div class="flex flex-wrap gap-1.5 mb-2">
                             <button class="radar-filter-btn active" onclick="filterRadarSidebar('all', this)">All</button>
                             <button class="radar-filter-btn" onclick="filterRadarSidebar('disasters', this)">Disasters</button>
@@ -335,6 +385,19 @@
         let webIntel = [];
         let activeRadarFilter = 'all';
         let activeFeedFilter = 'all';
+        let usingFallbackLocation = true;
+        let selectingRouteDestination = false;
+        let routeBusy = false;
+        let lastGeocodeAt = 0;
+        let routeDestination = null;
+        let routeDestinationLabel = '';
+        let routeOptions = [];
+        let selectedRouteIndex = 0;
+        let routeLayer = null;
+        let routeStartMarker = null;
+        let routeEndMarker = null;
+        let routeWarnings = [];
+        let routeBufferMeters = 1000;
 
         function updateSourceStatus(sourceId, label, state = 'neutral') {
             const node = document.getElementById('status-' + sourceId);
@@ -390,10 +453,12 @@
                 navigator.geolocation.getCurrentPosition(
                     position => {
                         userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                        usingFallbackLocation = false;
                         setupMapAndData();
                     },
                     error => {
-                        console.warn('GPS denied/failed; using default Jakarta location.', error);
+                        console.warn('GPS denied/failed; map will use a Jakarta fallback. Route planning is disabled until GPS is available.', error);
+                        usingFallbackLocation = true;
                         setupMapAndData();
                     },
                     { enableHighAccuracy: true, timeout: 10000 }
@@ -407,12 +472,9 @@
             document.getElementById('loading-text').innerText = 'Loading BMKG, disaster reports, earthquakes, and emergency facilities...';
             await fetchRealData(userLocation.lat, userLocation.lng);
 
-            document.getElementById('gps-status').innerHTML = `
-                <span class="relative flex h-2.5 w-2.5">
-                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-                </span>
-                <span class="text-green-600 font-semibold text-xs">Radar Ready</span>
-            `;
+            document.getElementById('gps-status').innerHTML = usingFallbackLocation
+                ? '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span><span class="text-amber-700 font-semibold text-xs">Default Jakarta · GPS unavailable</span>'
+                : '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span><span class="text-green-600 font-semibold text-xs">GPS Active</span>';
 
             initMap();
             renderFeed('all');
@@ -669,6 +731,18 @@
 
             L.control.zoom({ position: 'bottomright' }).addTo(map);
             markersLayer = L.layerGroup().addTo(map);
+            map.on('click', function (event) {
+                if (!selectingRouteDestination) return;
+                selectingRouteDestination = false;
+                const pickButton = document.getElementById('pick-destination-btn');
+                if (pickButton) pickButton.classList.remove('active');
+                document.getElementById('route-destination').value =
+                    event.latlng.lat.toFixed(5) + ', ' + event.latlng.lng.toFixed(5);
+                routeDestination = { lat: event.latlng.lat, lng: event.latlng.lng };
+                routeDestinationLabel = 'Map point';
+                setRouteStatus('Map destination selected. Calculating a driving route…', 'neutral');
+                calculateRouteToCoordinates(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
+            });
 
             const userIconHtml = '<div class="custom-marker marker-user w-6 h-6"><i class="fa-solid fa-person"></i></div>';
             const userIcon = L.divIcon({ className: 'bg-transparent', html: userIconHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
