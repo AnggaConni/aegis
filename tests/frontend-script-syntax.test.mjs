@@ -167,6 +167,9 @@ test('hazard overview separates current local signals from regional context and 
   assert.match(html, /No qualifying mapped signal was found within 10 km/);
   assert.match(html, /recent regional signal\(s\) are between 10 and 50 km away/);
   assert.match(html, /6 data feeds responding/);
+  assert.match(html, /within 50 km/);
+  assert.match(html, /within 25 km/);
+  assert.match(html, /within 10 km/);
   assert.match(html, /isFreshHazardSignal\(inc\)/);
 });
 
