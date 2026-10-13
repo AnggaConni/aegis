@@ -521,7 +521,7 @@
                             <p class="source-row"><span><span class="radar-source-dot"></span>PetaBencana · community reports</span><span id="status-petabencana" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>OpenStreetMap · facilities</span><span id="status-osm" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>Police API · recorded crime (UK only)</span><span id="status-crimeapi" class="source-state neutral">Coverage-limited</span></p>
-                            <p class="source-row"><span><span class="radar-source-dot"></span>TinyFish · local news search</span><span id="status-tinyfish" class="source-state neutral">Optional</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>Local news search · Free Mode</span><span id="status-tinyfish" class="source-state neutral">Disabled · free mode</span></p>
                             <p class="mt-2">Coverage varies by source. Community and media reports are not independently verified. This tool is informational and is not an emergency dispatch service.</p>
                         </div>
                     </aside>
@@ -635,8 +635,7 @@
             fire_station: { color: 'marker-fire_station', hex: '#f97316', icon: 'fa-fire-extinguisher', name: 'Fire Station', source: 'OpenStreetMap' }
         };
 
-        // Public feeds can run in the browser. TinyFish must go through a proxy to keep its API key private.
-        const TINYFISH_PROXY_URL = 'https://civilaegis-tinyfish-proxy.conniezz-cool.workers.dev/nearby-intel';
+        // Free-only build: public feeds run in the browser; no paid news-search API or Worker is used.
         let webIntel = [];
         let activeRadarFilter = 'all';
         let activeFeedFilter = 'guide';
@@ -689,7 +688,6 @@
                 savedAt: new Date().toISOString(),
                 incidents: incidents.slice(0, 400),
                 routeHazardCandidates: routeHazardCandidates.slice(0, 1200),
-                webIntel: webIntel.slice(-40)
             };
             if (writeStoredJson(SAFETY_SNAPSHOT_KEY, snapshot)) {
                 cachedSafetySnapshotAt = snapshot.savedAt;
@@ -757,7 +755,8 @@
                 routeHazardCandidates = Array.isArray(snapshot.routeHazardCandidates)
                     ? snapshot.routeHazardCandidates.map(item => ({ ...item, cachedLocal: true }))
                     : incidents.slice();
-                webIntel = Array.isArray(snapshot.webIntel) ? snapshot.webIntel.map(item => ({ ...item, cachedLocal: true })) : [];
+                // Do not restore legacy external-news snapshots in the free-only build.
+                webIntel = [];
             }
             const savedPlan = readStoredJson(JOURNEY_PLAN_KEY, null);
             if (savedPlan && savedPlan.origin && savedPlan.destination && savedPlan.routes) {
@@ -995,10 +994,8 @@
             setRouteStatus('Refreshing public reports. Existing route will be rechecked against the new feed…', 'neutral');
             try {
                 await fetchRealData(userLocation.lat, userLocation.lng);
-                await Promise.allSettled([
-                    fetchTinyFishIntel(userLocation.lat, userLocation.lng, 'Current location'),
-                    fetchCrimeApi(userLocation.lat, userLocation.lng)
-                ]);
+                await Promise.allSettled([fetchCrimeApi(userLocation.lat, userLocation.lng)]);
+                updateSourceStatus('tinyfish', 'Disabled · free mode', 'neutral');
                 saveSafetySnapshot();
                 renderMapMarkers();
                 renderAwarenessOverview();
@@ -1058,7 +1055,6 @@
             };
             (snapshot.routeHazardCandidates || []).forEach(item => addCached(item, true));
             snapshot.incidents.forEach(item => addCached(item, false));
-            if (!webIntel.length && Array.isArray(snapshot.webIntel)) webIntel = snapshot.webIntel;
             Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, osm: 1 }).forEach(source => {
                 const node = document.getElementById('status-' + source);
                 if (node && node.dataset.state === 'error' && !navigator.onLine) {
@@ -1318,95 +1314,6 @@
             incidents.sort((a, b) => a.dist - b.dist);
             saveSafetySnapshot();
             if (!navigator.onLine) updateSourceStatus('osm', 'Offline · cached data', 'neutral');
-        }
-
-        async function fetchTinyFishIntel(lat, lng, localityLabel, append = false) {
-            if (!TINYFISH_PROXY_URL) {
-                updateSourceStatus('tinyfish', 'Worker not configured', 'neutral');
-                return;
-            }
-            updateSourceStatus('tinyfish', 'Searching…', 'neutral');
-            try {
-                const requestUrl = new URL(TINYFISH_PROXY_URL);
-                requestUrl.searchParams.set('lat', String(lat));
-                requestUrl.searchParams.set('lng', String(lng));
-                const response = await fetchWithTimeout(requestUrl.toString(), { headers: { 'Accept': 'application/json' } });
-                if (!response.ok) throw new Error('TinyFish proxy HTTP ' + response.status);
-                const payload = await response.json();
-                const bucketRows = (payload.recentResults || []).concat(
-                    payload.mediumTermResults || [],
-                    payload.longTermResults || [],
-                    payload.undatedResults || []
-                );
-                // Merge the combined feed with all bucket entries. Older Worker builds may cap
-                // either representation, so keep any unique row found in either place.
-                const sourceRows = (Array.isArray(payload.results) ? payload.results : []).concat(bucketRows);
-                const seenRows = new Set();
-                const rows = sourceRows.filter((row, index) => {
-                    const stableKey = String(row && (row.id || row.url) || (
-                        String(row && row.title || '') + '|' + String(row && row.snippet || '')
-                    )).trim().toLowerCase();
-                    if (!stableKey || seenRows.has(stableKey)) return false;
-                    seenRows.add(stableKey);
-                    return true;
-                });
-                const fetched = rows.map((row, index) => ({
-                    id: String(row.id || 'tinyfish_' + index),
-                    title: String(row.title || 'Local news signal'),
-                    snippet: String(row.snippet || row.description || 'No summary supplied by the search result.'),
-                    url: safeHttpUrl(row.url),
-                    source: String(row.source || 'TinyFish Search'),
-                    area: String(row.area || localityLabel || 'Approximate search area'),
-                    contextLabel: String(localityLabel || 'Current location'),
-                    publishedAt: row.publishedAt || row.published_at || null,
-                    publishedAtRaw: row.publishedAtRaw || null,
-                    publicationDateLabel: String(row.publicationDateLabel || 'Publication date unconfirmed'),
-                    publicationDatePrecision: String(row.publicationDatePrecision || 'unconfirmed'),
-                    publicationAgeDays: row.publicationAgeDays !== null && row.publicationAgeDays !== undefined && Number.isFinite(Number(row.publicationAgeDays)) ? Number(row.publicationAgeDays) : null,
-                    eventDate: row.eventDate || null,
-                    eventDatePrecision: String(row.eventDatePrecision || 'unconfirmed'),
-                    eventDateStatus: String(row.eventDateStatus || 'event-date-unconfirmed'),
-                    eventDateLabel: String(row.eventDateLabel || 'Event date unconfirmed'),
-                    eventAgeDays: row.eventAgeDays !== null && row.eventAgeDays !== undefined && Number.isFinite(Number(row.eventAgeDays)) ? Number(row.eventAgeDays) : null,
-                    ageYears: row.ageYears !== null && row.ageYears !== undefined && Number.isFinite(Number(row.ageYears)) ? Number(row.ageYears) : null,
-                    timelineAgeDays: row.timelineAgeDays !== null && row.timelineAgeDays !== undefined && Number.isFinite(Number(row.timelineAgeDays)) ? Number(row.timelineAgeDays) : null,
-                    timelineBasis: String(row.timelineBasis || 'undated'),
-                    timelineBucket: String(row.timelineBucket || 'undated'),
-                    timelineLabel: String(row.timelineLabel || row.recencyLabel || 'Date unconfirmed'),
-                    recencyLabel: String(row.recencyLabel || row.timelineLabel || 'Date unconfirmed'),
-                    searchPass: String(row.searchPass || row.searchWindow || ''),
-                    searchPassLabel: String(row.searchPassLabel || row.searchPass || row.searchWindow || ''),
-                    searchWindow: String(row.searchWindow || ''),
-                    searchWindowMeaning: String(row.searchWindowMeaning || 'search-pass-only-not-publication-or-event-date'),
-                    alertEligibility: String(row.alertEligibility || (String(row.timelineBucket || 'undated') === 'undated' ? 'manual-review-only' : 'unverified-search-lead')),
-                    currentIncidentConfirmed: row.currentIncidentConfirmed === true,
-                    dateStatus: String(row.dateStatus || ''),
-                    eventLocation: row.eventLocation || null,
-                    eventLocationScope: String(row.eventLocationScope || 'city-mentioned-context-unclear'),
-                    eventLocationStatus: String(row.eventLocationStatus || 'The event location is unconfirmed.'),
-                    locationEvidence: String(row.locationEvidence || ''),
-                    category: String(row.category || classifySafetyText(String(row.title || '') + ' ' + String(row.snippet || ''))),
-                    incidentTags: Array.isArray(row.incidentTags) ? row.incidentTags.map(tag => String(tag)).slice(0, 8) : [],
-                    dateEnrichmentSource: String(row.dateEnrichmentSource || 'search-result-only'),
-                    originalSourceChecked: row.originalSourceChecked === true,
-                    verified: false
-                })).filter(row => row.url);
-                webIntel = append
-                    ? Array.from(new Map(webIntel.concat(fetched).map(row => [row.url, row])).values()).slice(-30)
-                    : fetched;
-                const rejectedCount = payload.diagnostics && Number.isFinite(Number(payload.diagnostics.rejectedNonLocalCount))
-                    ? Number(payload.diagnostics.rejectedNonLocalCount) : null;
-                updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' items' +
-                    (rejectedCount === null ? '' : ' · filtered ' + rejectedCount + ' non-local'), 'ok');
-                renderRadarSidebar(activeRadarFilter);
-                renderAwarenessOverview();
-                renderSafetyRecommendations();
-                renderPersonalizedRecommendation();
-                renderFeed(activeFeedFilter);
-            } catch (error) {
-                console.warn('TinyFish search failed:', error);
-                updateSourceStatus('tinyfish', 'Unavailable', 'error');
-            }
         }
 
         function isSupportedPoliceApiArea(lat, lng) {
@@ -1863,7 +1770,7 @@
                     ? 'The city is mentioned in the article, but the exact event location is unclear.'
                     : 'The result links the city to the topic, but the exact incident location has not been independently confirmed.';
             if (bucket === 'undated') {
-                return 'TinyFish found a relevant search result, but its publication/event date could not be confirmed. Do not treat it as a current alert. ' + locationText;
+                return 'external news search found a relevant search result, but its publication/event date could not be confirmed. Do not treat it as a current alert. ' + locationText;
             }
             if (bucket === 'history-30-days-to-2-years' || bucket === 'history-2-to-5-years') {
                 return 'This is historical awareness context. ' + (article.timelineLabel || article.recencyLabel || 'The result has an older date') + '. ' +
@@ -1871,7 +1778,7 @@
                         ? 'An event date is supplied by the result, but should still be checked at the original source.'
                         : 'Only the article publication date is available; the event date is unconfirmed.') + ' ' + locationText;
             }
-            return 'TinyFish returned a recently dated article related to ' + String(article.category || 'public safety') +
+            return 'external news search returned a recently dated article related to ' + String(article.category || 'public safety') +
                 '. Recent publication does not prove the incident happened recently. ' + locationText;
         }
 
@@ -1940,7 +1847,7 @@
             } else if (category === 'accident') {
                 heading = 'Road accident or collision signal';
                 summary = signal.kind === 'web'
-                    ? 'TinyFish returned a local news result mentioning an accident. The exact incident location and current road conditions are not confirmed.'
+                    ? 'external news search returned a local news result mentioning an accident. The exact incident location and current road conditions are not confirmed.'
                     : 'A nearby accident-related report is available. Check the original source and road conditions before travelling.';
                 tips.push('Keep yourself out of moving traffic and move to a safe roadside location if you can do so without crossing danger.');
                 tips.push('Contact local emergency services. Give the location, number of people injured, and visible hazards.');
@@ -1974,9 +1881,6 @@
                 tips.push('Keep your phone locked and hide sensitive notification previews on the lock screen.');
                 tips.push('Keep cards and valuables secured; enable bank transaction alerts and use the card lock feature if available.');
                 tips.push('Identify a staffed help point or exit when entering a crowded venue, and share your trip with a trusted contact when appropriate.');
-                if (!TINYFISH_PROXY_URL) {
-                    summary += ' Local news recommendations are limited because the TinyFish Worker is not connected yet.';
-                }
                 facilities = ['police', 'hospital'];
             }
 
@@ -2233,7 +2137,7 @@
                     subtitle: 'A news result, community report, and official warning are different kinds of evidence.',
                     tips: [
                         'Check the original publication time, location, and source before acting or sharing.',
-                        'TinyFish results are web-search leads; they are not automatically verified incidents or precise map points.',
+                        'external news search results are web-search leads; they are not automatically verified incidents or precise map points.',
                         'If a feed is unavailable or no alert appears, do not infer that the area is safe.',
                         'Use local emergency services and official instructions for urgent decisions.'
                     ]
@@ -2316,9 +2220,9 @@
             document.getElementById('detail-title').textContent = article.title || 'Local news signal';
             document.getElementById('detail-desc').textContent = (article.snippet || 'No summary supplied.') +
                 ' This is a search/media lead, not an independently verified incident. No exact coordinates are asserted.';
-            document.getElementById('detail-category').textContent = 'TINYFISH · ' +
+            document.getElementById('detail-category').textContent = 'NEWS LEAD · ' +
                 String(article.category || 'public safety').replace(/_/g, ' ').toUpperCase() + ' · UNVERIFIED';
-            setDetailSource(article.source || 'TinyFish Search result', article.url);
+            setDetailSource(article.source || 'external news search result', article.url);
             document.getElementById('detail-distance').textContent = 'Search area: ' + (article.searchArea || article.area || 'approximate') +
                 (article.eventLocation ? ' · Reported event location: ' + article.eventLocation : '') +
                 ' · ' + getWebIntelScopeLabel(article) + '.';
@@ -2426,7 +2330,7 @@
                 const meta = document.createElement('span');
                 meta.className = 'radar-intel-meta block';
                 meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
-                    getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search') +
+                    getWebIntelScopeLabel(article) + ' · ' + (article.source || 'external news search') +
                     (getWebIntelTimelineBucket(article) === 'undated' ? ' · Manual review only — not a current alert' : '');
                 textWrap.appendChild(title);
                 textWrap.appendChild(meta);
@@ -2461,7 +2365,10 @@
             document.getElementById('intel-count').textContent = (filtered.length + webCount) + ((filtered.length + webCount) === 1 ? ' item' : ' items');
 
             if (!filtered.length && !webCount) {
-                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">No matching reports in the currently available feeds. Missing reports are not proof of safety.</div>';
+                const message = filterType === 'news'
+                    ? 'News & OSINT search is disabled in Free Mode. Public feeds remain available; no report is not proof of safety.'
+                    : 'No matching reports in the currently available feeds. Missing reports are not proof of safety.';
+                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">' + message + '</div>';
                 return;
             }
 
@@ -2715,7 +2622,7 @@
                     setRouteStatus('Route calculated and saved on this device. You can reopen it without signal.', 'ok');
                 }
 
-                fetchTinyFishIntel(destination.lat, destination.lng, routeDestinationLabel, true);
+                fetchexternal news searchIntel(destination.lat, destination.lng, routeDestinationLabel, true);
             } catch (error) {
                 console.warn('Route calculation failed:', error);
                 const returnIncomplete = journeyMode === 'roundtrip' && journeyPlan &&
@@ -3102,13 +3009,13 @@
                 empty.className = 'recommendation-card text-center';
                 const title = document.createElement('p');
                 title.className = 'text-sm font-bold text-slate-700';
-                title.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
-                    ? 'TinyFish News & OSINT is not connected yet.'
-                    : filterType === 'news' ? 'No web signals are available right now.' : 'No matching reports are available in the current feeds.';
+                title.textContent = filterType === 'news'
+                    ? 'News & OSINT search is disabled in Free Mode.'
+                    : 'No matching reports are available in the current feeds.';
                 const note = document.createElement('p');
                 note.className = 'text-xs text-slate-500 mt-2 leading-relaxed';
-                note.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
-                    ? 'Configure the Cloudflare Worker URL in TINYFISH_PROXY_URL to enable local news search. Never place the API key in public browser code.'
+                note.textContent = filterType === 'news'
+                    ? 'This build uses public data feeds and does not call a paid news-search service or backend Worker. A lack of reports is not proof that an area is safe.'
                     : 'A lack of reports is not proof that an area is safe. Check official local guidance.';
                 empty.appendChild(title);
                 empty.appendChild(note);
@@ -3163,12 +3070,12 @@
             title.textContent = article.title || 'Local web signal';
             const desc = document.createElement('p');
             desc.className = 'text-xs text-slate-600 mt-1.5 leading-relaxed';
-            desc.textContent = article.snippet || 'No summary supplied by TinyFish Search.';
+            desc.textContent = article.snippet || 'No summary supplied by external news search.';
             const meta = document.createElement('p');
             meta.className = 'text-[10px] font-semibold mt-2';
             meta.style.color = historical || undated ? '#64748b' : '#b45309';
             meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
-                getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search') +
+                getWebIntelScopeLabel(article) + ' · ' + (article.source || 'external news search') +
                 (undated ? ' · Manual review only — not a current alert' : '');
 
             const dateMeta = document.createElement('p');
