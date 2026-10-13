@@ -1,0 +1,35 @@
+name: CivilAegis Worker Checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tinyfish-worker.js"
+      - "index.html"
+      - "sw.js"
+      - "tests/**"
+      - ".github/workflows/civilaegis-worker-checks.yml"
+  pull_request:
+    paths:
+      - "tinyfish-worker.js"
+      - "index.html"
+      - "sw.js"
+      - "tests/**"
+      - ".github/workflows/civilaegis-worker-checks.yml"
+
+jobs:
+  worker-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check TinyFish Worker syntax
+        run: node --check --input-type=module < tinyfish-worker.js
+      - name: Check service worker syntax
+        run: node --check sw.js
+      - name: Run timeline and deduplication tests
+        run: node --test tests/tinyfish-worker.test.mjs
