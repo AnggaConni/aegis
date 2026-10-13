@@ -428,6 +428,7 @@
         let routeWarnings = [];
         let routeBufferMeters = 1000;
         let safetyRefreshBusy = false;
+        let journeyPlanPersisted = false;
         let journeyMode = 'oneway';
         let activeJourneyLeg = 'outbound';
         let journeyPlan = null;
@@ -514,6 +515,7 @@
                 alertRadiusMeters: routeBufferMeters
             };
             const saved = writeStoredJson(JOURNEY_PLAN_KEY, journeyPlan);
+            journeyPlanPersisted = saved;
             updateOfflinePlanNote();
             return saved;
         }
@@ -531,6 +533,7 @@
             const savedPlan = readStoredJson(JOURNEY_PLAN_KEY, null);
             if (savedPlan && savedPlan.origin && savedPlan.destination && savedPlan.routes) {
                 journeyPlan = savedPlan;
+                journeyPlanPersisted = true;
                 journeyMode = savedPlan.mode === 'roundtrip' ? 'roundtrip' : 'oneway';
                 activeJourneyLeg = savedPlan.activeLeg === 'return' ? 'return' : 'outbound';
                 routePlanOrigin = savedPlan.origin;
@@ -571,9 +574,14 @@
             note.classList.toggle('stale', !navigator.onLine);
             const stamp = journeyPlan.savedAt ? new Date(journeyPlan.savedAt) : null;
             const age = stamp && !Number.isNaN(stamp.getTime()) ? ' Saved ' + stamp.toLocaleString() + '.' : '';
-            note.innerHTML = !navigator.onLine
-                ? '<i class="fa-solid fa-wifi-slash mr-1"></i>Offline mode. Saved trip and turn steps are available locally; live hazards cannot refresh.' + age
-                : '<i class="fa-solid fa-floppy-disk mr-1"></i>Trip plan saved on this device. Return leg and steps can be reopened without signal.' + age;
+            if (!journeyPlanPersisted) {
+                note.classList.add('stale');
+                note.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>Trip is visible now but could not be confirmed in local storage. Keep this page open and check browser storage space.';
+            } else {
+                note.innerHTML = !navigator.onLine
+                    ? '<i class="fa-solid fa-wifi-slash mr-1"></i>Offline mode. Saved trip and turn steps are available locally; live hazards cannot refresh.' + age
+                    : '<i class="fa-solid fa-floppy-disk mr-1"></i>Trip plan saved on this device. Return leg and steps can be reopened without signal.' + age;
+            }
         }
 
         async function registerOfflineApp() {
@@ -703,6 +711,8 @@
                 ? '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span><span class="text-amber-700 font-semibold text-xs">GPS unavailable · last-known plan only</span>'
                 : '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span><span class="text-green-600 font-semibold text-xs">GPS Active</span>';
 
+            incidents.forEach(item => { item.dist = calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)); });
+            routeHazardCandidates.forEach(item => { item.dist = calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)); });
             initMap();
             renderMapMarkers();
             renderFeed(activeFeedFilter || 'all');
