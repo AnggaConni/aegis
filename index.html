@@ -1172,7 +1172,7 @@
                         });
                     });
                     if (responding) {
-                        updateSourceStatus('bmkg', 'Online · ' + responding + '/3 feeds · ' + addedNearby + ' nearby', 'ok');
+                        updateSourceStatus('bmkg', 'Online · ' + responding + '/3 feeds · ' + addedNearby + ' within 50 km', 'ok');
                     } else {
                         updateSourceStatus('bmkg', 'Unavailable', 'error');
                     }
@@ -1208,7 +1208,7 @@
                             const added = addIncidentIfUnique(quakeReport);
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('usgs', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('usgs', 'Online · ' + nearbyCount + ' within 50 km', 'ok');
                     } catch (error) {
                         console.warn('USGS fetch failed:', error);
                         updateSourceStatus('usgs', 'Unavailable', 'error');
@@ -1262,7 +1262,7 @@
                             routeHazardCandidates.push(report);
                             if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount++;
                         });
-                        updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' within 50 km', 'ok');
                     } catch (error) {
                         console.warn('GDACS fetch failed:', error);
                         updateSourceStatus('gdacs', 'Unavailable', 'error');
@@ -1322,7 +1322,7 @@
                             routeHazardCandidates.push(report);
                             if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount += 1;
                         });
-                        updateSourceStatus('eonet', 'Online · ' + nearbyCount + ' nearby / ' + eligibleCount + ' point events', 'ok');
+                        updateSourceStatus('eonet', 'Online · ' + nearbyCount + ' within 50 km / ' + eligibleCount + ' point events', 'ok');
                     } catch (error) {
                         console.warn('NASA EONET fetch failed:', error);
                         updateSourceStatus('eonet', 'Unavailable', 'error');
@@ -1404,7 +1404,7 @@
                             const added = addIncidentIfUnique(report);
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('petabencana', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('petabencana', 'Online · ' + nearbyCount + ' within 25 km', 'ok');
                     } catch (error) {
                         console.warn('PetaBencana fetch failed:', error);
                         updateSourceStatus('petabencana', 'Unavailable / format changed', 'error');
@@ -1443,7 +1443,7 @@
                             });
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('osm', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('osm', 'Online · ' + nearbyCount + ' within 10 km', 'ok');
                     } catch (error) {
                         console.warn('Overpass fetch failed:', error);
                         updateSourceStatus('osm', 'Unavailable', 'error');
