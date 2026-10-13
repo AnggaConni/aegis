@@ -49,9 +49,48 @@
         }
         
         #map {
-            height: calc(100vh - 60px - 64px);
+            height: 100%;
             width: 100%;
             z-index: 10;
+        }
+
+        /* Civilian safety radar: 3/4 map, 1/4 local intelligence sidebar. */
+        #radar-workspace { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+        #radar-top-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr);
+            gap: 10px;
+            padding: 10px 10px 8px;
+            flex: 1;
+            min-height: 0;
+        }
+        #map-panel { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 14px; background: #e2e8f0; }
+        #radar-sidebar { min-width: 0; min-height: 0; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
+        #incident-detail-panel { flex: 0 0 auto; min-height: 132px; max-height: 180px; margin: 0 10px 10px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 14px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 2px 10px rgba(15,23,42,.04); }
+        .detail-icon { width: 42px; height: 42px; border-radius: 12px; display: flex; flex: 0 0 auto; align-items: center; justify-content: center; color: #fff; background: #64748b; }
+        .detail-content { min-width: 0; flex: 1; }
+        .detail-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+        .detail-action-btn { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; background: #fff; color: #334155; font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .detail-action-primary { background: #2563eb; border-color: #2563eb; color: white; }
+        .radar-filter-btn { padding: 6px 9px; border: 1px solid #e2e8f0; border-radius: 999px; background: #fff; color: #475569; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .radar-filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+        .radar-intel-item { width: 100%; text-align: left; display: flex; gap: 9px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+        .radar-intel-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; border-radius: 9px; color: white; }
+        .radar-intel-title { color: #0f172a; font-size: 12px; line-height: 1.35; font-weight: 700; }
+        .radar-intel-meta { color: #64748b; font-size: 10px; margin-top: 4px; }
+        .radar-source-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; background:#94a3b8; }
+        .leaflet-control-attribution { font-size: 10px; background: rgba(255,255,255,0.88) !important; padding: 2px 5px !important; }
+
+        @media (max-width: 800px) {
+            #view-radar { overflow-y: auto !important; overflow-x: hidden !important; }
+            #radar-workspace { height: auto; min-height: 100%; }
+            #radar-top-layout { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(260px, 45vh) auto; flex: none; padding: 8px; gap: 8px; }
+            #map-panel { height: 45vh; min-height: 260px; }
+            #radar-sidebar { max-height: 270px; }
+            #incident-detail-panel { margin: 0 8px 8px; max-height: none; flex-wrap: wrap; }
+            .detail-content { flex-basis: calc(100% - 60px); }
+            .detail-actions { width: 100%; padding-left: 56px; }
+            .detail-action-btn { flex: 1; }
         }
 
         /* Keep Leaflet's required map attribution visible and legible. */
@@ -133,50 +172,69 @@
             <p id="loading-text" class="text-slate-500 text-sm text-center px-6">Connecting to GPS satellites...</p>
         </div>
 
-        <!-- VIEW 1: RADAR (MAP) -->
+        <!-- VIEW 1: CIVILIAN SAFETY RADAR -->
         <div id="view-radar" class="view-section active !p-0 !overflow-hidden">
-            <div id="map"></div>
-            
-            <!-- Map Overlay Controls -->
-            <div class="absolute top-4 right-4 z-[40] flex flex-col gap-2">
-                <button onclick="centerMapOnUser()" class="w-10 h-10 bg-white border border-slate-200 rounded-lg shadow-md flex items-center justify-center text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition">
-                    <i class="fa-solid fa-crosshairs"></i>
-                </button>
-            </div>
-
-            <!-- Bottom Sheet (Incident Details) -->
-            <div id="incident-sheet" class="bottom-sheet absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-5">
-                <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-5"></div>
-                
-                <div class="flex justify-between items-start mb-4">
-                    <div class="flex items-center gap-3">
-                        <div id="sheet-icon" class="w-10 h-10 rounded-full flex items-center justify-center text-white text-base shadow-sm">
-                            <i class="fa-solid fa-bolt"></i>
+            <div id="radar-workspace">
+                <div id="radar-top-layout">
+                    <section id="map-panel" aria-label="Nearby safety map">
+                        <div id="map"></div>
+                        <div class="absolute top-3 right-3 z-[40] flex flex-col gap-2">
+                            <button onclick="centerMapOnUser()" aria-label="Center map on your location" title="Center on me" class="w-10 h-10 bg-white border border-slate-200 rounded-lg shadow-md flex items-center justify-center text-slate-700 hover:bg-slate-50">
+                                <i class="fa-solid fa-crosshairs"></i>
+                            </button>
                         </div>
-                        <div>
-                            <h3 id="sheet-title" class="font-bold text-lg leading-tight text-slate-900">Incident Details</h3>
-                            <p id="sheet-distance" class="text-xs font-medium text-slate-500 mt-0.5">1.2 km from your location</p>
+                        <div class="absolute top-3 left-3 z-[40] bg-white/95 border border-slate-200 rounded-lg shadow-sm px-3 py-2 text-[10px] font-bold tracking-wide text-slate-700">
+                            <i class="fa-solid fa-shield-halved text-blue-600 mr-1"></i> CIVILIAN SAFETY RADAR
+                        </div>
+                    </section>
+
+                    <aside id="radar-sidebar" aria-label="Nearby intelligence">
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <div>
+                                <h2 class="text-sm font-extrabold text-slate-900"><i class="fa-solid fa-satellite-dish text-blue-600 mr-1"></i> Nearby Intel</h2>
+                                <p class="text-[10px] text-slate-500 mt-1">Reports and services near your location</p>
+                            </div>
+                            <span id="intel-count" class="bg-blue-50 text-blue-700 rounded-full px-2 py-1 text-[10px] font-bold">0 items</span>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 mb-2">
+                            <button class="radar-filter-btn active" onclick="filterRadarSidebar('all', this)">All</button>
+                            <button class="radar-filter-btn" onclick="filterRadarSidebar('earthquake', this)">Disasters</button>
+                            <button class="radar-filter-btn" onclick="filterRadarSidebar('safezone', this)">Emergency services</button>
+                            <button class="radar-filter-btn" onclick="filterRadarSidebar('news', this)">News</button>
+                        </div>
+                        <div id="radar-feed-container">
+                            <div class="text-center py-8 text-slate-400 text-xs">Loading nearby intelligence…</div>
+                        </div>
+                        <div class="mt-3 pt-3 border-t border-slate-100 text-[10px] leading-relaxed text-slate-500">
+                            <p class="font-bold text-slate-700 mb-1">Data source status</p>
+                            <p><span class="radar-source-dot"></span>USGS · earthquakes</p>
+                            <p><span class="radar-source-dot"></span>OpenStreetMap · emergency facilities</p>
+                            <p><span class="radar-source-dot"></span>GDELT · geolocated news signals</p>
+                            <p class="mt-2">Coverage differs by source. Reports are informational, not a substitute for emergency services or official confirmation.</p>
+                        </div>
+                    </aside>
+                </div>
+
+                <section id="incident-detail-panel" aria-live="polite" aria-label="Selected incident details">
+                    <div id="detail-icon" class="detail-icon"><i class="fa-solid fa-circle-info"></i></div>
+                    <div class="detail-content">
+                        <div class="flex flex-wrap items-center gap-2 mb-1">
+                            <span id="detail-category" class="text-[9px] font-extrabold tracking-wider text-blue-700 bg-blue-50 rounded px-2 py-1">READY</span>
+                            <span id="detail-source" class="text-[10px] text-slate-500">CivilAegis intelligence panel</span>
+                        </div>
+                        <h3 id="detail-title" class="font-extrabold text-sm text-slate-900">Select an alert on the map</h3>
+                        <p id="detail-desc" class="text-xs text-slate-600 mt-1 leading-relaxed">Click a marker or an item in Nearby Intel to read its details here.</p>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-slate-500">
+                            <span id="detail-distance"><i class="fa-solid fa-location-arrow mr-1"></i>Awaiting selection</span>
+                            <span id="detail-time"><i class="fa-regular fa-clock mr-1"></i>—</span>
+                            <span id="detail-coordinates"><i class="fa-solid fa-location-dot mr-1"></i>—</span>
                         </div>
                     </div>
-                    <button onclick="closeSheet()" class="text-slate-400 p-1 hover:text-slate-600 bg-slate-100 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
-                </div>
-
-                <div class="bg-slate-50 rounded-xl p-4 mb-4 border border-slate-100">
-                    <p id="sheet-desc" class="text-sm text-slate-700 mb-3 leading-relaxed break-words">Incident description will appear here.</p>
-                    <div class="flex items-center justify-between text-xs font-medium text-slate-500 border-t border-slate-200 pt-3 mt-1">
-                        <span id="sheet-time"><i class="fa-regular fa-clock mr-1"></i> 15 mins ago</span>
-                        <span id="sheet-source"><i class="fa-solid fa-database mr-1"></i> Live Data API</span>
+                    <div class="detail-actions">
+                        <button id="btn-save" onclick="toggleSaveIncident()" disabled class="detail-action-btn opacity-50 cursor-not-allowed"><i class="fa-regular fa-bookmark mr-1"></i> Save</button>
+                        <button onclick="routeToIncident()" class="detail-action-btn detail-action-primary"><i class="fa-solid fa-route mr-1"></i> Route</button>
                     </div>
-                </div>
-
-                <div class="flex gap-3">
-                    <button id="btn-save" onclick="toggleSaveIncident()" class="flex-1 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 transition-colors shadow-sm">
-                        <i class="fa-regular fa-bookmark"></i> Save
-                    </button>
-                    <button onclick="routeToIncident()" class="flex-1 bg-primary hover:bg-blue-600 text-white rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 transition-colors shadow-sm shadow-blue-200">
-                        <i class="fa-solid fa-route"></i> Actions
-                    </button>
-                </div>
+                </section>
             </div>
         </div>
 
@@ -290,6 +348,7 @@
             initMap();
             renderFeed('all');
             renderSaved();
+            renderRadarSidebar('all');
 
             document.getElementById('loading-overlay').classList.add('hidden');
             requestAnimationFrame(() => map.invalidateSize());
@@ -458,27 +517,90 @@
         // --- BOTTOM SHEET LOGIC ---
         function openIncidentSheet(inc) {
             currentSelectedIncident = inc;
-            const typeInfo = INCIDENT_TYPES[inc.type];
-            if (!typeInfo) return;
+            const typeInfo = INCIDENT_TYPES[inc.type] || { color: '', icon: 'fa-circle-info', name: inc.type, source: 'Unknown source' };
             const dist = calculateDistance(userLocation.lat, userLocation.lng, inc.lat, inc.lng).toFixed(1);
 
-            document.getElementById('sheet-title').innerText = inc.title;
-            document.getElementById('sheet-distance').innerText = `${dist} km from your location`;
-            document.getElementById('sheet-desc').innerText = inc.desc;
-            document.getElementById('sheet-time').innerHTML = `<i class="fa-regular fa-clock mr-1"></i> ${inc.timeText}`;
-            document.getElementById('sheet-source').innerHTML = `<i class="fa-solid fa-database mr-1"></i> ${typeInfo.source}`;
+            document.getElementById('detail-title').textContent = inc.title || 'Incident report';
+            document.getElementById('detail-desc').textContent = inc.desc || 'No additional description is available.';
+            document.getElementById('detail-category').textContent = (typeInfo.name || inc.type || 'INTEL').toUpperCase();
+            document.getElementById('detail-source').textContent = typeInfo.source || 'External data source';
+            document.getElementById('detail-distance').innerHTML = '<i class="fa-solid fa-location-arrow mr-1"></i>' + dist + ' km from your location';
+            document.getElementById('detail-time').innerHTML = '<i class="fa-regular fa-clock mr-1"></i>' + (inc.timeText || 'Time not provided');
+            document.getElementById('detail-coordinates').innerHTML = '<i class="fa-solid fa-location-dot mr-1"></i>' + Number(inc.lat).toFixed(4) + ', ' + Number(inc.lng).toFixed(4);
 
-            const iconDiv = document.getElementById('sheet-icon');
-            iconDiv.className = `w-10 h-10 rounded-full flex items-center justify-center text-white text-lg shadow-md ${typeInfo.color}`;
-            iconDiv.innerHTML = `<i class="fa-solid ${typeInfo.icon}"></i>`;
+            const iconDiv = document.getElementById('detail-icon');
+            iconDiv.className = 'detail-icon ' + (typeInfo.color || '');
+            iconDiv.style.backgroundColor = typeInfo.hex || '#64748b';
+            iconDiv.innerHTML = '<i class="fa-solid ' + (typeInfo.icon || 'fa-circle-info') + '"></i>';
             updateSaveButtonUI();
-            document.getElementById('incident-sheet').classList.add('open');
-            map.flyTo([inc.lat, inc.lng], 15, { duration: 0.5 });
+
+            if (map) map.flyTo([inc.lat, inc.lng], Math.max(map.getZoom(), 14), { duration: 0.5 });
         }
 
         function closeSheet() {
-            document.getElementById('incident-sheet').classList.remove('open');
             currentSelectedIncident = null;
+            document.getElementById('detail-category').textContent = 'READY';
+            document.getElementById('detail-source').textContent = 'CivilAegis intelligence panel';
+            document.getElementById('detail-title').textContent = 'Select an alert on the map';
+            document.getElementById('detail-desc').textContent = 'Click a marker or an item in Nearby Intel to read its details here.';
+            document.getElementById('detail-distance').innerHTML = '<i class="fa-solid fa-location-arrow mr-1"></i>Awaiting selection';
+            document.getElementById('detail-time').innerHTML = '<i class="fa-regular fa-clock mr-1"></i>—';
+            document.getElementById('detail-coordinates').innerHTML = '<i class="fa-solid fa-location-dot mr-1"></i>—';
+            const iconDiv = document.getElementById('detail-icon');
+            iconDiv.className = 'detail-icon';
+            iconDiv.style.backgroundColor = '#64748b';
+            iconDiv.innerHTML = '<i class="fa-solid fa-circle-info"></i>';
+            updateSaveButtonUI();
+        }
+
+        function renderRadarSidebar(filterType = 'all') {
+            const container = document.getElementById('radar-feed-container');
+            if (!container) return;
+            container.innerHTML = '';
+            const filtered = filterType === 'all'
+                ? incidents
+                : filterType === 'safezone'
+                    ? incidents.filter(i => ['police', 'hospital', 'fire_station'].includes(i.type))
+                    : filterType === 'earthquake'
+                        ? incidents.filter(i => i.type === 'earthquake')
+                        : incidents.filter(i => i.type === filterType);
+
+            document.getElementById('intel-count').textContent = filtered.length + (filtered.length === 1 ? ' item' : ' items');
+            if (!filtered.length) {
+                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">No matching reports available in the current data feed.</div>';
+                return;
+            }
+
+            filtered.slice(0, 80).forEach(inc => {
+                const typeInfo = INCIDENT_TYPES[inc.type] || { color: '', hex: '#64748b', icon: 'fa-circle-info', source: 'Data feed' };
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'radar-intel-item';
+                const icon = document.createElement('span');
+                icon.className = 'radar-intel-icon';
+                icon.style.backgroundColor = typeInfo.hex || '#64748b';
+                icon.innerHTML = '<i class="fa-solid ' + typeInfo.icon + '"></i>';
+                const textWrap = document.createElement('span');
+                textWrap.className = 'min-w-0 flex-1';
+                const title = document.createElement('span');
+                title.className = 'radar-intel-title block';
+                title.textContent = inc.title || 'Incident report';
+                const meta = document.createElement('span');
+                meta.className = 'radar-intel-meta block';
+                meta.textContent = (inc.timeText || 'Time unavailable') + ' · ' + (Number(inc.dist).toFixed(1)) + ' km';
+                textWrap.appendChild(title);
+                textWrap.appendChild(meta);
+                item.appendChild(icon);
+                item.appendChild(textWrap);
+                item.addEventListener('click', () => openIncidentSheet(inc));
+                container.appendChild(item);
+            });
+        }
+
+        function filterRadarSidebar(type, button) {
+            document.querySelectorAll('.radar-filter-btn').forEach(btn => btn.classList.remove('active'));
+            if (button) button.classList.add('active');
+            renderRadarSidebar(type);
         }
 
         function routeToIncident() {
@@ -589,6 +711,14 @@
         function updateSaveButtonUI() {
             if (!currentSelectedIncident) return;
             const btn = document.getElementById('btn-save');
+            if (!currentSelectedIncident) {
+                btn.innerHTML = '<i class="fa-regular fa-bookmark mr-1"></i> Save';
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
             const isSaved = savedIncidents.some(i => i.id === currentSelectedIncident.id);
             if (isSaved) {
                 btn.innerHTML = '<i class="fa-solid fa-bookmark"></i> Saved';
