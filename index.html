@@ -334,6 +334,7 @@
         const TINYFISH_PROXY_URL = '';
         let webIntel = [];
         let activeRadarFilter = 'all';
+        let activeFeedFilter = 'all';
 
         function updateSourceStatus(sourceId, label, state = 'neutral') {
             const node = document.getElementById('status-' + sourceId);
@@ -504,8 +505,31 @@
                         else if (payload && payload.result && payload.result.type === 'FeatureCollection' && Array.isArray(payload.result.features)) features = payload.result.features;
                         else if (payload && payload.result && Array.isArray(payload.result.features)) features = payload.result.features;
                         else if (payload && Array.isArray(payload.features)) features = payload.features;
-                        else if (payload && Array.isArray(payload.result)) features = payload.result;
-                        else throw new Error('GeoJSON feature list not found; API may have changed format');
+                        else {
+                            // Some PetaBencana responses still wrap point reports in TopoJSON.
+                            const topology = payload && payload.type === 'Topology' ? payload
+                                : (payload && payload.result && payload.result.type === 'Topology' ? payload.result : null);
+                            if (topology) {
+                                const objects = topology.objects || {};
+                                const collection = objects.output || objects[Object.keys(objects)[0]];
+                                const transform = topology.transform || { scale: [1, 1], translate: [0, 0] };
+                                features = ((collection && collection.geometries) || []).map(function (geometry) {
+                                    let coordinates = geometry.coordinates;
+                                    if (geometry.type === 'Point' && Array.isArray(coordinates) && topology.transform) {
+                                        coordinates = [
+                                            coordinates[0] * transform.scale[0] + transform.translate[0],
+                                            coordinates[1] * transform.scale[1] + transform.translate[1]
+                                        ];
+                                    }
+                                    return {
+                                        type: 'Feature',
+                                        geometry: { type: geometry.type, coordinates: coordinates },
+                                        properties: geometry.properties || {}
+                                    };
+                                });
+                            } else if (payload && Array.isArray(payload.result)) features = payload.result;
+                            else throw new Error('GeoJSON feature list not found; API may have changed format');
+                        }
 
                         let nearbyCount = 0;
                         features.forEach((feature, index) => {
@@ -620,6 +644,7 @@
                 })).filter(row => row.url);
                 updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' results', 'ok');
                 renderRadarSidebar(activeRadarFilter);
+                renderFeed(activeFeedFilter);
             } catch (error) {
                 console.warn('TinyFish search failed:', error);
                 updateSourceStatus('tinyfish', 'Unavailable', 'error');
@@ -861,6 +886,7 @@
 
         // --- FEED & SAVED VIEWS ---
         function filterFeed(type, button) {
+            activeFeedFilter = type;
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 btn.classList.remove('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
                 btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
