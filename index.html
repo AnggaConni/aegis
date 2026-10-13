@@ -549,6 +549,7 @@
                             <p class="source-row"><span><span class="radar-source-dot"></span>BMKG · official earthquakes</span><span id="status-bmkg" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>USGS · global earthquakes</span><span id="status-usgs" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>GDACS · global disaster alerts</span><span id="status-gdacs" class="source-state neutral">Waiting</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>NASA EONET · open natural events</span><span id="status-eonet" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>Open-Meteo · forecast at route destination</span><span id="status-weather" class="source-state neutral">On route</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>PetaBencana · community reports</span><span id="status-petabencana" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>OpenStreetMap · facilities</span><span id="status-osm" class="source-state neutral">Waiting</span></p>
@@ -862,7 +863,7 @@
             updateOfflinePlanNote();
             const status = document.getElementById('route-status');
             if (!navigator.onLine) {
-                ['bmkg', 'usgs', 'gdacs', 'petabencana', 'osm', 'crimeapi'].forEach(id => {
+                ['bmkg', 'usgs', 'gdacs', 'eonet', 'petabencana', 'osm', 'crimeapi'].forEach(id => {
                     const node = document.getElementById('status-' + id);
                     if (node && (node.textContent === 'Waiting' || node.dataset.state === 'error')) {
                         updateSourceStatus(id, 'Offline · cached only', 'neutral');
@@ -1073,6 +1074,7 @@
                 [/USGS/i, 'usgs'],
                 [/PetaBencana/i, 'petabencana'],
                 [/GDACS/i, 'gdacs'],
+                [/NASA EONET/i, 'eonet'],
                 [/OpenStreetMap/i, 'osm']
             ];
             const isSourceUnavailable = item => {
@@ -1096,7 +1098,7 @@
             (snapshot.routeHazardCandidates || []).forEach(item => addCached(item, true));
             snapshot.incidents.forEach(item => addCached(item, false));
             if (!webIntel.length && Array.isArray(snapshot.webIntel)) webIntel = snapshot.webIntel;
-            Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, osm: 1 }).forEach(source => {
+            Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, eonet: 1, osm: 1 }).forEach(source => {
                 const node = document.getElementById('status-' + source);
                 if (node && node.dataset.state === 'error' && !navigator.onLine) {
                     node.textContent = 'Offline · cached reports';
@@ -1107,38 +1109,71 @@
         }
 
         async function fetchRealData(lat, lng) {
+            // Reset live candidates on every refresh. The previous snapshot is restored only
+            // for feeds that fail, preventing stale route hazards from accumulating forever.
             incidents = [];
-            ['bmkg', 'petabencana', 'usgs', 'gdacs', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
+            routeHazardCandidates = [];
+            ['bmkg', 'petabencana', 'usgs', 'gdacs', 'eonet', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
 
             const tasks = [
                 (async () => {
-                    try {
-                        const response = await fetchWithTimeout('https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json');
-                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const endpoints = [
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json', label: 'latest' },
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/gempaterkini.json', label: 'M5+ list' },
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/gempadirasakan.json', label: 'felt list' }
+                    ];
+                    let responding = 0;
+                    let addedNearby = 0;
+                    const results = await Promise.allSettled(endpoints.map(async endpoint => {
+                        const response = await fetchWithTimeout(endpoint.url);
+                        if (!response.ok) throw new Error(endpoint.label + ' HTTP ' + response.status);
                         const payload = await response.json();
-                        const quake = payload && payload.Infogempa && payload.Infogempa.gempa;
-                        if (!quake) throw new Error('Unexpected BMKG response format');
-                        const coords = String(quake.Coordinates || '').split(',').map(Number);
-                        if (coords.length !== 2 || !coords.every(Number.isFinite)) throw new Error('Missing coordinates');
-                        const quakeLat = coords[0], quakeLng = coords[1];
-                        const dist = calculateDistance(lat, lng, quakeLat, quakeLng);
-                        const stamp = quake.DateTime || new Date().toISOString();
-                        const bmkgReport = {
-                            id: 'bmkg_' + String(quake.DateTime || quake.Tanggal || 'latest'),
-                            type: 'earthquake',
-                            title: 'BMKG earthquake · M ' + String(quake.Magnitude || '—'),
-                            desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', quake.Potensi || '', quake.Dirasakan ? 'Felt: ' + quake.Dirasakan : ''].filter(Boolean).join(' | '),
-                            lat: quakeLat, lng: quakeLng, dist: dist,
-                            timestamp: stamp, timeText: formatRelativeTime(stamp),
-                            sourceName: 'BMKG Data Terbuka',
-                            sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
-                            confidenceLabel: 'Official bulletin'
-                        };
-                        routeHazardCandidates.push(bmkgReport);
-                        if (dist <= 50) addIncidentIfUnique(bmkgReport);
-                        updateSourceStatus('bmkg', dist <= 50 ? 'Online · local bulletin' : 'Online · no local quake', 'ok');
-                    } catch (error) {
-                        console.warn('BMKG fetch failed:', error);
+                        const rawRows = payload && payload.Infogempa && payload.Infogempa.gempa;
+                        const rows = Array.isArray(rawRows) ? rawRows : rawRows ? [rawRows] : [];
+                        if (!rows.length) throw new Error(endpoint.label + ' returned no parseable rows');
+                        return { label: endpoint.label, rows };
+                    }));
+                    results.forEach((result, endpointIndex) => {
+                        if (result.status !== 'fulfilled') {
+                            console.warn('BMKG ' + endpoints[endpointIndex].label + ' feed failed:', result.reason);
+                            return;
+                        }
+                        responding += 1;
+                        result.value.rows.forEach((quake, index) => {
+                            const coords = String(quake.Coordinates || '').split(',').map(Number);
+                            if (coords.length !== 2 || !coords.every(Number.isFinite)) return;
+                            const quakeLat = coords[0], quakeLng = coords[1];
+                            const stamp = quake.DateTime || null;
+                            const ageHours = stamp ? (Date.now() - new Date(stamp).getTime()) / 3600000 : NaN;
+                            // The M5+ and felt lists include older entries. Only place recent reports
+                            // into the live hazard/route feeds; older events must not masquerade as active.
+                            if (!Number.isFinite(ageHours) || ageHours < -1 || ageHours > 72) return;
+                            const dist = calculateDistance(lat, lng, quakeLat, quakeLng);
+                            const magnitude = Number(quake.Magnitude);
+                            const feltText = String(quake.Dirasakan || '').trim();
+                            const potentialText = String(quake.Potensi || '').trim();
+                            const feedLabel = result.value.label;
+                            const bmkgReport = {
+                                id: 'bmkg_' + String(quake.DateTime || quake.Coordinates || feedLabel + '_' + index),
+                                type: 'earthquake',
+                                title: 'BMKG earthquake · M ' + (Number.isFinite(magnitude) ? magnitude.toFixed(1) : '—'),
+                                desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', potentialText, feltText ? 'Felt: ' + feltText : ''].filter(Boolean).join(' | '),
+                                lat: quakeLat, lng: quakeLng, dist: dist,
+                                timestamp: stamp, timeText: formatRelativeTime(stamp),
+                                sourceName: 'BMKG Data Terbuka (' + feedLabel + ')',
+                                sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
+                                confidenceLabel: 'Official bulletin',
+                                magnitude: Number.isFinite(magnitude) ? magnitude : null,
+                                felt: !!feltText,
+                                tsunamiPotential: /berpotensi tsunami|tsunami/i.test(potentialText)
+                            };
+                            routeHazardCandidates.push(bmkgReport);
+                            if (dist <= 50 && addIncidentIfUnique(bmkgReport)) addedNearby += 1;
+                        });
+                    });
+                    if (responding) {
+                        updateSourceStatus('bmkg', 'Online · ' + responding + '/3 feeds · ' + addedNearby + ' nearby', 'ok');
+                    } else {
                         updateSourceStatus('bmkg', 'Unavailable', 'error');
                     }
                 })(),
@@ -1162,7 +1197,11 @@
                                 timeText: formatRelativeTime(stamp), timestamp: stamp,
                                 sourceName: 'USGS Earthquake Catalog',
                                 sourceUrl: feature.properties.url || 'https://earthquake.usgs.gov/earthquakes/',
-                                confidenceLabel: 'Official seismic catalog'
+                                confidenceLabel: 'Official seismic catalog',
+                                magnitude: Number.isFinite(Number(feature.properties.mag)) ? Number(feature.properties.mag) : null,
+                                feltCount: Number.isFinite(Number(feature.properties.felt)) ? Number(feature.properties.felt) : 0,
+                                mmi: Number.isFinite(Number(feature.properties.mmi)) ? Number(feature.properties.mmi) : null,
+                                tsunamiPotential: Number(feature.properties.tsunami) === 1
                             };
                             routeHazardCandidates.push(quakeReport);
                             if (dist > 50) return;
@@ -1202,7 +1241,7 @@
                             const eventLat = Number(geometry.coordinates[1]);
                             if (!Number.isFinite(eventLat) || !Number.isFinite(eventLng)) return;
                             const dist = calculateDistance(lat, lng, eventLat, eventLng);
-                            const stamp = props.fromdate || props.todate || props.fromDate || new Date().toISOString();
+                            const stamp = props.fromdate || props.todate || props.fromDate || null;
                             const eventType = String(props.eventtype || props.eventType || '').toUpperCase();
                             const alertLevel = String(props.alertlevel || props.alertLevel || 'alert').toUpperCase();
                             const eventName = String(props.name || props.title || props.eventname || 'Global disaster event');
@@ -1213,10 +1252,12 @@
                                 title: 'GDACS ' + alertLevel + ' · ' + eventName,
                                 desc: 'Global disaster alert (' + (eventType || 'multi-hazard') + '). This is an alert signal; check the source for affected areas and current status.',
                                 lat: eventLat, lng: eventLng, dist: dist,
-                                timeText: formatRelativeTime(stamp), timestamp: stamp,
+                                timeText: stamp ? formatRelativeTime(stamp) : 'Time unavailable', timestamp: stamp,
                                 sourceName: 'GDACS Global Disaster Alerts',
                                 sourceUrl: eventUrl,
-                                confidenceLabel: 'Global alert · check official situation updates'
+                                confidenceLabel: 'Global alert · check official situation updates',
+                                alertLevel: alertLevel,
+                                eventType: eventType
                             };
                             routeHazardCandidates.push(report);
                             if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount++;
@@ -1225,6 +1266,66 @@
                     } catch (error) {
                         console.warn('GDACS fetch failed:', error);
                         updateSourceStatus('gdacs', 'Unavailable', 'error');
+                    }
+                })(),
+                (async () => {
+                    try {
+                        const endpoint = new URL('https://eonet.gsfc.nasa.gov/api/v3/events');
+                        endpoint.searchParams.set('status', 'open');
+                        endpoint.searchParams.set('days', '7');
+                        endpoint.searchParams.set('limit', '200');
+                        const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        const payload = await response.json();
+                        if (!Array.isArray(payload.events)) throw new Error('Unexpected EONET response format');
+                        let nearbyCount = 0;
+                        let eligibleCount = 0;
+                        payload.events.forEach(event => {
+                            const categories = Array.isArray(event.categories) ? event.categories : [];
+                            const categoryText = categories.map(category => String((category && (category.title || category.id)) || '')).join(' ').toLowerCase();
+                            const mappedType = /wildfire|wildfires|fire/.test(categoryText) ? 'fire_event'
+                                : /volcano|volcanic/.test(categoryText) ? 'volcano'
+                                : /severe storm|storm|tropical cyclone/.test(categoryText) ? 'wind'
+                                : /dust|haze/.test(categoryText) ? 'haze'
+                                : /landslide|flood|earthquake|snow/.test(categoryText) ? 'disaster'
+                                : '';
+                            if (!mappedType) return;
+                            const geometries = Array.isArray(event.geometry) ? event.geometry : [];
+                            const latestGeometry = geometries
+                                .filter(item => item && item.type === 'Point' && Array.isArray(item.coordinates) && item.coordinates.length >= 2)
+                                .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())[0];
+                            // EONET also returns polygons; this point-only feed integration deliberately
+                            // skips them rather than plotting a polygon centroid as an exact incident.
+                            if (!latestGeometry) return;
+                            const eventLng = Number(latestGeometry.coordinates[0]);
+                            const eventLat = Number(latestGeometry.coordinates[1]);
+                            if (!Number.isFinite(eventLat) || !Number.isFinite(eventLng) ||
+                                Math.abs(eventLat) > 90 || Math.abs(eventLng) > 180) return;
+                            const stamp = latestGeometry.date || null;
+                            const dist = calculateDistance(lat, lng, eventLat, eventLng);
+                            const eventSources = Array.isArray(event.sources) ? event.sources : [];
+                            const sourceUrl = safeHttpUrl(eventSources[0] && (eventSources[0].url || eventSources[0].source)) ||
+                                safeHttpUrl(event.link) || 'https://eonet.gsfc.nasa.gov/';
+                            const report = {
+                                id: 'eonet_' + String(event.id || event.title || eligibleCount),
+                                type: mappedType,
+                                title: 'NASA EONET · ' + String(event.title || 'Open natural event'),
+                                desc: String(event.description || '') + ' Open event metadata from NASA EONET; point location only. Check linked source for affected-area details.',
+                                lat: eventLat, lng: eventLng, dist: dist,
+                                timestamp: stamp, timeText: stamp ? formatRelativeTime(stamp) : 'Time unavailable',
+                                sourceName: 'NASA EONET · open natural events',
+                                sourceUrl: sourceUrl,
+                                confidenceLabel: 'Global event metadata · inspect source and affected area',
+                                eonetCategory: categoryText
+                            };
+                            eligibleCount += 1;
+                            routeHazardCandidates.push(report);
+                            if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount += 1;
+                        });
+                        updateSourceStatus('eonet', 'Online · ' + nearbyCount + ' nearby / ' + eligibleCount + ' point events', 'ok');
+                    } catch (error) {
+                        console.warn('NASA EONET fetch failed:', error);
+                        updateSourceStatus('eonet', 'Unavailable', 'error');
                     }
                 })(),
                 (async () => {
@@ -1282,7 +1383,7 @@
                                 : rawType === 'haze' ? 'haze'
                                 : rawType === 'wind' ? 'wind' : 'disaster';
                             const typeInfo = INCIDENT_TYPES[normalizedType];
-                            const timestamp = props.created_at || props.createdAt || new Date().toISOString();
+                            const timestamp = props.created_at || props.createdAt || null;
                             const rawTitle = String(props.title || '').trim();
                             const title = rawTitle && rawTitle !== ' '
                                 ? rawTitle : (typeInfo ? typeInfo.name : 'Community disaster report');
@@ -1294,7 +1395,7 @@
                                 type: normalizedType, title: title,
                                 desc: description || 'Community-submitted disaster report. Verify independently before acting.',
                                 lat: reportLat, lng: reportLng, dist: dist,
-                                timeText: formatRelativeTime(timestamp), timestamp: timestamp,
+                                timeText: timestamp ? formatRelativeTime(timestamp) : 'Time unavailable', timestamp: timestamp,
                                 sourceName: 'PetaBencana community report', sourceUrl: sourceUrl,
                                 confidenceLabel: 'Community report · verify independently'
                             };
