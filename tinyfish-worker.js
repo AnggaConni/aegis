@@ -197,13 +197,13 @@ export default {
                     const snippet = String(item.snippet || item.description || item.content || '');
                     const text = (title + ' ' + snippet).toLowerCase();
                     let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|sexual harassment/.test(text)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash/.test(text)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence/.test(text)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone/.test(text)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing/.test(text)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run/.test(text)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan/.test(text)) category = 'disaster';
+                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(text)) category = 'sexual_violence';
+                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(text)) category = 'homicide_or_fatality';
+                    else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(text)) category = 'unrest';
+                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(text)) category = 'theft';
+                    else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(text)) category = 'scam_or_fraud';
+                    else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(text)) category = 'road_accident';
+                    else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(text)) category = 'disaster';
 
                     const rawDate = item.publishedAt || item.published_at || item.date || item.pubDate || null;
                     let publishedAt = rawDate;
