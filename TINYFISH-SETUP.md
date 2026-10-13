@@ -55,13 +55,16 @@ OpenStreetMap public raster tiles are not cached for offline use. Saved routes a
 - OpenStreetMap tile policy: https://operations.osmfoundation.org/policies/tiles/
 - UK Police crime API: https://data.police.uk/docs/method/crime-street/
 
-## Configure TinyFish
+## Configure TinyFish through Cloudflare Workers Builds
 
-1. Deploy tinyfish-worker.js as a Cloudflare Worker.
-2. Add TINYFISH_API_KEY as a Cloudflare Worker secret.
-3. Set ALLOWED_ORIGINS to https://anggaconni.github.io.
-4. Deploy the Worker and copy the URL ending in /nearby-intel.
-5. Set TINYFISH_PROXY_URL in index.html to that Worker URL and commit the change.
+The repository includes `wrangler.jsonc`, which tells Wrangler to deploy `tinyfish-worker.js` as the Worker entrypoint. For the Git-connected setup:
+
+1. In Cloudflare Workers & Pages, connect the GitHub repository `AnggaConni/aegis` and branch `main`.
+2. Use the project name `civilaegis-tinyfish-proxy` to match `wrangler.jsonc`.
+3. Leave Build command empty. Keep Deploy command as `npx wrangler deploy`; the Wrangler configuration selects `tinyfish-worker.js`.
+4. Deploy the Worker and open its Settings → Variables and Secrets. Add `TINYFISH_API_KEY` as a **Secret** using the real TinyFish API key. Add `ALLOWED_ORIGINS` as a plain variable with value `https://anggaconni.github.io`. Deploy the settings changes.
+5. Copy the Worker URL and append `/nearby-intel`.
+6. In `index.html`, set `TINYFISH_PROXY_URL` to that full endpoint and commit the change.
 
 A GitHub Repository Secret is not automatically available to GitHub Pages or a Cloudflare Worker. Keep the API key in the Worker secret store; never expose it in browser code.
 
