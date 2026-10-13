@@ -390,7 +390,7 @@ export default {
                     const timelineBucket = bucketForAge(timelineAgeDays);
                     if (timelineBucket === 'outside-5-year-window') {
                         diagnostics.rejectedOutsideFiveYearWindowCount += 1;
-                        continue;
+                        return;
                     }
                     if (timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
                     if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
