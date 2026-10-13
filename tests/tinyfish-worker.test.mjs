@@ -18,7 +18,7 @@ async function runWorker(rowsByPass, sourcePages = {}, options = {}) {
     }
   };
 
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init = {}) => {
     const requestUrl = new URL(typeof input === 'string' ? input : input.url);
 
     if (requestUrl.hostname === 'nominatim.openstreetmap.org') {
@@ -29,8 +29,24 @@ async function runWorker(rowsByPass, sourcePages = {}, options = {}) {
 
     if (requestUrl.hostname === 'api.search.tinyfish.ai') {
       if (Array.isArray(options.searchQueries)) options.searchQueries.push(requestUrl.searchParams.get('query') || '');
-      const rows = rowsByPass[searchIndex] || [];
+      const thisIndex = searchIndex;
       searchIndex += 1;
+      const failure = Array.isArray(options.searchFailures) ? options.searchFailures[thisIndex] : null;
+      if (failure && failure.type === 'timeout') {
+        const timeoutError = new Error('The operation timed out');
+        timeoutError.name = 'TimeoutError';
+        throw timeoutError;
+      }
+      if (failure && failure.type === 'network') {
+        throw new TypeError('fetch failed');
+      }
+      if (failure && failure.status) {
+        return new Response(JSON.stringify({ error: failure.message || 'Mock upstream error' }), {
+          status: failure.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      const rows = rowsByPass[thisIndex] || [];
       return new Response(JSON.stringify({ results: rows }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -64,7 +80,7 @@ async function runWorker(rowsByPass, sourcePages = {}, options = {}) {
       { TINYFISH_API_KEY: 'test-key', ALLOWED_ORIGINS: 'https://anggaconni.github.io' },
       { waitUntil: () => undefined }
     );
-    assert.equal(response.status, 200);
+    assert.equal(response.status, options.expectedStatus || 200);
     return response.json();
   } finally {
     globalThis.fetch = originalFetch;
@@ -498,4 +514,45 @@ test('a three-year-old local bombing is retained as historical incident context,
   assert.equal(body.results[0].category, 'explosion_or_blast');
   assert.equal(body.results[0].alertEligibility, 'historical-awareness-only');
   assert.equal(body.results[0].currentIncidentConfirmed, false);
+});
+
+
+test('a timed-out TinyFish window does not stop later search windows from succeeding', async () => {
+  const publishedAt = new Date().toISOString();
+  const body = await runWorker([
+    [],
+    [{
+      title: 'Fatal robbery reported in Jakarta',
+      snippet: 'Police arrested a suspect following a fatal robbery in Jakarta, Indonesia.',
+      eventDate: publishedAt,
+      publishedAt,
+      url: 'https://example.com/jakarta-fatal-robbery-today'
+    }],
+    []
+  ], {}, {
+    searchFailures: [{ type: 'timeout' }, null, null]
+  });
+
+  assert.equal(body.successfulSearches, 2);
+  assert.equal(body.failedSearchWindows.length, 1);
+  assert.equal(body.failedSearchWindows[0].window, 'recent-30-days');
+  assert.equal(body.failedSearchWindows[0].reason, 'timeout');
+  assert.equal(body.results.length, 1, 'later windows must still contribute results');
+  assert.equal(body.results[0].title, 'Fatal robbery reported in Jakarta');
+});
+
+test('all failed TinyFish windows return actionable diagnostics instead of hiding the failure', async () => {
+  const body = await runWorker([[], [], []], {}, {
+    expectedStatus: 502,
+    searchFailures: [{ type: 'timeout' }, { status: 429 }, { status: 403 }]
+  });
+
+  assert.equal(body.error, 'TinyFish Search did not return successful time-window searches');
+  assert.equal(body.successfulSearches, 0);
+  assert.equal(body.failedSearchWindows.length, 3);
+  assert.equal(body.failedSearchWindows[0].reason, 'timeout');
+  assert.equal(body.failedSearchWindows[1].reason, 'rate-limited');
+  assert.equal(body.failedSearchWindows[2].reason, 'authentication-failed');
+  assert.equal(body.filterVersion, 11);
+  assert.equal(body.buildVersion, 'global-drr-v1.1-search-reliability');
 });
