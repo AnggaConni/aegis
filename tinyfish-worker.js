@@ -141,7 +141,7 @@ export default {
                 const payload = await searchResponse.json();
                 extractResults(payload).forEach(function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
-                    if (!/^https?:\\/\\//i.test(targetUrl)) return;
+                    if (!/^https?:\/\//i.test(targetUrl)) return;
                     const key = targetUrl.toLowerCase();
                     if (seen.has(key)) return;
 
