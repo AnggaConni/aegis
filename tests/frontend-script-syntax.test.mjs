@@ -52,7 +52,8 @@ test('mobile bottom navigation is compact and radar content scrolls naturally', 
   assert.match(html, /#bottom-navigation\s*\{[\s\S]*?height:\s*calc\(54px \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(html, /#bottom-navigation \.nav-btn > i/);
   assert.match(html, /#radar-sidebar\s*\{\s*max-height:\s*none;\s*overflow:\s*visible;/);
-  assert.match(html, /#view-radar\s*\{[\s\S]*?100dvh[\s\S]*?54px/);
+  assert.match(html, /body > main\s*\{\s*min-height:\s*0;\s*overflow:\s*hidden;\s*\}/);
+  assert.match(html, /#view-radar\s*\{\s*height:\s*100%;\s*min-height:\s*0;/);
 });
 
 
