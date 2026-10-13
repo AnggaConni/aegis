@@ -268,6 +268,10 @@
                                 <span id="awareness-signal-count" class="text-[9px] font-semibold text-slate-500">Checking available feeds</span>
                                 <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">Safety recommendations <i class="fa-solid fa-arrow-right ml-1"></i></button>
                             </div>
+                            <div id="awareness-trip-note" class="hidden mt-2 pt-2 border-t border-slate-100 text-[10px] text-emerald-800">
+                                <i class="fa-solid fa-floppy-disk mr-1"></i><span id="awareness-trip-copy">A saved journey is available on this device.</span>
+                                <button class="text-blue-700 font-bold underline ml-1" type="button" onclick="setSafetyMode('navigation')">Open saved trip</button>
+                            </div>
                         </section>
 
                         <section id="route-planner-card" class="route-planner hidden" aria-label="Route planner">
@@ -364,7 +368,7 @@
         <!-- VIEW 2: FEED (LIST) -->
         <div id="view-feed" class="view-section p-4 bg-slate-50">
             <h2 class="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800">
-                <i class="fa-solid fa-list-ul text-primary"></i> Live Intel Feed
+                <i class="fa-solid fa-shield-halved text-primary"></i> Safety Guide &amp; Intel Feed
             </h2>
             
             <p class="text-sm text-slate-500 -mt-2 mb-4">Safety guidance and local signals. Recommendations are in English and do not replace official instructions.</p>
@@ -771,7 +775,7 @@
                 updateJourneyControls();
                 updateOfflinePlanNote();
                 displaySavedRouteWeather();
-                if (routeOptions.length) {
+                if (routeOptions.length && safetyMode === 'navigation') {
                     applyRouteOption(selectedRouteIndex, true);
                     displaySavedRouteWeather();
                     setRouteStatus(navigator.onLine
@@ -1314,6 +1318,17 @@
                 return node && node.dataset.state === 'ok';
             }).length;
             count.textContent = onlineSources + '/5 incident and facility sources responding · ' + webIntel.length + ' web signals';
+
+            const tripNote = document.getElementById('awareness-trip-note');
+            const tripCopy = document.getElementById('awareness-trip-copy');
+            const hasSavedTrip = !!(journeyPlan && journeyPlan.routes &&
+                Object.values(journeyPlan.routes).some(value => Array.isArray(value) && value.length));
+            if (tripNote) tripNote.classList.toggle('hidden', !hasSavedTrip);
+            if (tripCopy && hasSavedTrip) {
+                tripCopy.textContent = journeyPlan.mode === 'roundtrip'
+                    ? 'Saved round-trip plan: ' + (journeyPlan.destinationLabel || 'destination') + '.'
+                    : 'Saved route: ' + (journeyPlan.destinationLabel || 'destination') + '.';
+            }
         }
 
         function createRecommendationCard(icon, title, subtitle, tips, actionLabel, actionHandler) {
@@ -1415,6 +1430,24 @@
                 );
                 alertCard.classList.add('border-amber-200');
                 container.appendChild(alertCard);
+            }
+
+            if (webIntel.length) {
+                container.appendChild(createRecommendationCard(
+                    'fa-newspaper',
+                    'Local news signals are available',
+                    webIntel.length + ' web result(s) can help you monitor the area, but search results are not verified incident records.',
+                    [
+                        'Open the source and confirm the publication date, event location, and whether the information is still current.',
+                        'Do not treat a headline alone as proof that a location is dangerous or that an evacuation is required.',
+                        'Use official emergency alerts to make urgent safety decisions.'
+                    ],
+                    'Review News & OSINT',
+                    () => {
+                        switchTab('feed');
+                        filterFeed('news', document.getElementById('feed-filter-news'));
+                    }
+                ));
             }
 
             const cards = [
