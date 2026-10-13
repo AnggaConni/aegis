@@ -1386,22 +1386,32 @@
 
         function renderAwarenessOverview() {
             const hazards = currentNearbyHazards(10);
+            const crimeSignals = incidents.filter(item => item.type === 'crime' &&
+                Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
+                calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= 10);
             const title = document.getElementById('awareness-risk-title');
             const pill = document.getElementById('awareness-risk-pill');
             const copy = document.getElementById('awareness-risk-copy');
             const count = document.getElementById('awareness-signal-count');
             if (!title || !pill || !copy || !count) return;
 
-            title.textContent = hazards.length ? 'Nearby hazard signals detected' : 'No nearby hazard signals found';
-            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : hazards.length ? ' attention' : '');
-            pill.innerHTML = hazards.length
-                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + hazards.length + (hazards.length === 1 ? ' report' : ' reports')
+            const totalSignals = hazards.length + crimeSignals.length;
+            title.textContent = hazards.length
+                ? 'Nearby hazard signals detected'
+                : crimeSignals.length
+                    ? 'Recorded crime data is available nearby'
+                    : 'No nearby hazard signals found';
+            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals ? ' attention' : '');
+            pill.innerHTML = totalSignals
+                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' signal' : ' signals')
                 : '<i class="fa-solid fa-eye"></i> Monitoring';
             if (hazards.length) {
                 const nearest = hazards[0];
                 const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
-                copy.textContent = 'The available feeds contain ' + hazards.length + ' hazard signal(s) within 10 km. Nearest mapped signal: ' +
+                copy.textContent = 'The available feeds contain ' + hazards.length + ' mapped hazard signal(s) within 10 km. Nearest: ' +
                     (nearest.title || nearest.type) + ' (' + nearestKm.toFixed(1) + ' km). Check its timestamp and original source before acting.';
+            } else if (crimeSignals.length) {
+                copy.textContent = crimeSignals.length + ' historical police-recorded crime item(s) were returned near this point. Locations are approximate and records are not live alerts; review the categories and reporting month below.';
             } else {
                 copy.textContent = 'No mapped hazard signals were found within 10 km in the currently available feeds. Coverage can be incomplete or delayed; this is not a safety guarantee.';
             }
