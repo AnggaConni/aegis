@@ -2,17 +2,21 @@
 
 CivilAegis is a static Leaflet application. Python is not required for the current stage.
 
-## Awareness mode and recommendations
+## Awareness mode and personalized recommendations
 
 The app opens in **Awareness** mode so someone can view nearby reports, services, and web intelligence without planning a route. Choose **Plan a route** to open the routing controls. Switching back to Awareness removes route overlays from the map but does not delete the saved trip.
 
-The Feed has four primary views:
-- **Recommendations** — practical English-language safety guidance for phone security, pickpocketing, payment-card skimming/card-not-present fraud, evacuation preparation, and information verification.
-- **All signals** — recommendations plus currently available reports and TinyFish web signals.
-- **Incident reports** — mapped alerts and facilities from the structured feeds.
-- **News & OSINT** — source-linked TinyFish search results, labelled as unverified leads rather than confirmed incidents.
+Immediately below **Personal Safety Overview**, the app displays a personalized recommendation. It classifies available nearby mapped hazards and TinyFish local search results into themes such as theft/pickpocketing, payment-card fraud, road accidents, floods, fires, and earthquakes. Recommendations include practical next steps and distances to the nearest mapped police station, hospital, or fire station when those POIs are available from OpenStreetMap. The POI distance is calculated from the user's current location; facility opening status and whether it is an appropriate destination are not verified.
 
-When available mapped hazard reports are within about 10 km, the app presents a contextual recommendation. This is not a formal risk rating. For floods, it advises avoiding floodwater and following official evacuation guidance. It can open the route planner so the user can choose an official evacuation centre or other verified safer destination. The app must not claim that an arbitrary nearby facility is safe or open.
+TinyFish items are **unverified search/media leads**, not confirmed incidents. The recommendation shows source context, keeps the original source link, and avoids declaring a location unsafe from a headline alone. Missing reports are not proof of safety.
+
+The Feed has four primary views:
+- **Recommendations** — English-language guidance for phone security, pickpocketing, payment-card skimming/card-not-present fraud, evacuation preparation, and information verification.
+- **All signals** — recommendations plus currently available reports and TinyFish web signals.
+- **Incident reports** — mapped alerts, facility points, and eligible crime records.
+- **News & OSINT** — source-linked TinyFish results, labelled as unverified leads.
+
+When a mapped hazard report is within about 10 km, the app presents contextual guidance. For floods, it advises avoiding floodwater and following official evacuation guidance. It can open the route planner so the user can choose an official evacuation centre or another verified safer destination. The app must not claim that an arbitrary nearby facility is safe or open.
 
 ## Public feeds used by index.html
 
@@ -24,7 +28,10 @@ When available mapped hazard reports are within about 10 km, the app presents a 
 - **Open-Meteo** — forecast rainfall, rain probability, and wind at the planned destination. This is weather context only, not a flood or road-closure alert.
 - **OSRM public demo** — driving route alternatives, estimated duration, and turn instructions.
 - **OpenStreetMap Nominatim** — destination search when the user explicitly submits a query.
-- **TinyFish Search** — optional local news/web signals through a Cloudflare Worker; not an official incident registry.
+- **TinyFish Search** — optional local news/web signals through a Cloudflare Worker.
+- **UK Police API (data.police.uk)** — free street-level recorded-crime data only in its supported UK coverage. The API's crime locations are anonymised/approximate and the records are historical monthly data, not live alerts. CivilAegis calls it only when the user's coordinates fall inside a rough England/Wales/Northern Ireland coverage box. The geographic guard is conservative but is not an official boundary check; the API is not treated as a complete source for Scotland. It does not provide Indonesian crime incidents.
+
+There is no integrated nationwide open, real-time Indonesian crime-incident API in this implementation. For Indonesia, CivilAegis uses TinyFish local news/search leads plus mapped police-station POIs, and explicitly labels the gap rather than presenting unverified news as official crime data.
 
 A failed feed is unavailable data, not evidence that an area is safe.
 
@@ -53,6 +60,7 @@ The current route planner is a prototype, not full live navigation: it does not 
 - Open-Meteo's free API is for open-source/non-commercial use and requires attribution: https://open-meteo.com/en/terms
 - GDACS data uses attribution and data-use terms: https://www.gdacs.org/gdacsapi/swagger/index.html
 - OpenStreetMap public raster tiles do not provide an offline-download service: https://operations.osmfoundation.org/policies/tiles/
+- UK Police open crime API documentation and its approximate street-level location model: https://data.police.uk/docs/method/crime-street/
 
 ## Enable TinyFish News & OSINT
 
