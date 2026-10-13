@@ -2106,7 +2106,8 @@
                     title.textContent = article.title;
                     const meta = document.createElement('span');
                     meta.className = 'radar-intel-meta block';
-                    meta.textContent = (article.source || 'TinyFish Search') + ' · ' + (article.area || 'local area') + ' · not independently verified';
+                    meta.textContent = (article.recencyLabel || article.dateStatus || 'Publication date unconfirmed') + ' · ' +
+                    (article.area || 'municipality/city') + ' · ' + (article.source || 'TinyFish Search') + ' · not independently verified';
                     textWrap.appendChild(title);
                     textWrap.appendChild(meta);
                     item.appendChild(icon);
@@ -2749,14 +2750,16 @@
             filtered.forEach(item => container.appendChild(createIncidentCard(item)));
             if (showWeb) {
                 const currentArticles = webIntel.filter(article =>
+                    article.ageYears === null || article.ageYears === undefined ||
                     !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425));
                 const historicalArticles = webIntel.filter(article =>
+                    article.ageYears !== null && article.ageYears !== undefined &&
                     Number.isFinite(Number(article.ageYears)) && Number(article.ageYears) > (30 / 365.2425) && Number(article.ageYears) <= 5);
 
                 if (currentArticles.length) {
                     const heading = document.createElement('div');
                     heading.className = 'text-xs font-extrabold uppercase tracking-wide text-amber-700 mt-3';
-                    heading.textContent = 'Recent local news and public-safety signals';
+                    heading.textContent = 'Recent and undated local news signals · check publication dates';
                     container.appendChild(heading);
                     currentArticles.forEach(article => container.appendChild(createWebIntelCard(article)));
                 }
@@ -2795,7 +2798,8 @@
                 ? (Number(article.ageYears).toFixed(1) + ' years ago')
                 : 'Publication date unconfirmed');
             meta.textContent = (historical ? 'HISTORICAL · ' : '') + ageLabel + ' · ' + (article.area || 'municipality/city') + ' · ' +
-                (article.source || 'TinyFish Search') + ' · unverified media/search signal';
+                (article.source || 'TinyFish Search') + ' · unverified media/search signal' +
+                (article.searchWindow ? ' · ' + article.searchWindow : '');
             const link = document.createElement('a');
             link.className = 'inline-block mt-2 text-xs font-semibold text-blue-700 hover:underline';
             link.href = article.url;
