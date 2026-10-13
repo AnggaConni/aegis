@@ -557,7 +557,11 @@
             const legControls = document.getElementById('journey-leg-controls');
             if (oneWay) oneWay.classList.toggle('active', journeyMode === 'oneway');
             if (roundTrip) roundTrip.classList.toggle('active', journeyMode === 'roundtrip');
-            if (legControls) legControls.classList.toggle('hidden', journeyMode !== 'roundtrip');
+            if (legControls) {
+                const showLegControls = journeyMode === 'roundtrip';
+                legControls.classList.toggle('hidden', !showLegControls);
+                legControls.style.display = showLegControls ? 'flex' : 'none';
+            }
             const outbound = document.getElementById('leg-outbound');
             const returning = document.getElementById('leg-return');
             if (outbound) outbound.classList.toggle('active', activeJourneyLeg === 'outbound');
@@ -765,7 +769,10 @@
                 renderRadarSidebar(activeRadarFilter);
                 renderSaved();
                 if (routeOptions.length) {
-                    routeOptions.forEach(route => { route.warnings = getRouteWarnings(route.geometry.coordinates); });
+                    routeOptions.forEach(route => {
+                        route.warnings = getRouteWarnings(route.geometry.coordinates);
+                        route.warningCount = route.warnings.length;
+                    });
                     applyRouteOption(selectedRouteIndex, false);
                 } else {
                     setRouteStatus('Public feeds refreshed. Select a destination to check the route corridor.', 'ok');
@@ -783,7 +790,6 @@
             }
         }
 
-        // --- REAL API DATA FETCHING ---
         // --- REAL API DATA FETCHING ---
         function mergeUnavailableCachedFeeds() {
             const snapshot = readStoredJson(SAFETY_SNAPSHOT_KEY, null);
@@ -1912,7 +1918,6 @@
             selectedRouteIndex = 0;
             updateJourneyControls();
             updateOfflinePlanNote();
-            routeOptions = [];
             routeWarnings = [];
             routeDestination = null;
             routeDestinationLabel = '';
