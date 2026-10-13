@@ -1,11 +1,11 @@
 # CivilAegis
 
-CivilAegis is a static, browser-based personal-safety awareness map and route-planning PWA with an optional TinyFish Search integration for local-news awareness.
+CivilAegis is a static, browser-based personal-safety awareness map and route-planning PWA with TinyFish Search integration for location-aware incident reports and structural-risk context worldwide.
 
 ## Architecture
 
 - **Frontend:** static HTML, Tailwind CSS, Leaflet, and browser storage; deployable on GitHub Pages.
-- **TinyFish Search:** free web-search API used to find local reports. The current published free limits are 30 Search requests/minute and 500/hour.
+- **TinyFish Search:** free web-search API used to find locally relevant incident reports and structural-risk context for the reverse-geocoded country, region and locality (not hardcoded to Indonesia). The current published free limits are 30 Search requests/minute and 500/hour.
 - **Cloudflare Worker:** a lightweight proxy that keeps `TINYFISH_API_KEY` out of public browser code, validates inputs/origins, caches results, filters/deduplicates news leads, and exposes date/location confidence labels.
 - **Other public data feeds:** BMKG, USGS, GDACS, PetaBencana, OpenStreetMap/Overpass, Open-Meteo, OSRM public demo, and the UK Police API where supported.
 
@@ -15,7 +15,7 @@ TinyFish Search and Fetch are currently listed as free; paid Agent/Browser servi
 
 - Interactive map and GPS location (permission required)
 - Nearby public hazard and disaster feeds
-- Local-news search leads with publication/event dates, source URLs, approximate search area, and unverified-status labels
+- Location-aware incident reports and separate risk/prevalence context with publication/event dates, source URLs, geographic-scope labels, and verification limits
 - One-way and round-trip driving route planning
 - Route corridor checks against currently available mapped hazard data
 - Saved reports, trip plans, and PDF export
@@ -23,9 +23,9 @@ TinyFish Search and Fetch are currently listed as free; paid Agent/Browser servi
 
 ## Safety and data limitations
 
-News search results are leads, not independently verified incident reports. Mentioning a city does not provide exact incident coordinates. Event dates and article publication dates are kept separate; an undated or historically dated result must not be treated as a current alert. Historical news is context, not evidence of active danger.
+Search results are evidence leads, not automatically verified reports of active incidents. CivilAegis separates (1) recently reported incidents, (2) historical incidents that can inform preparedness, and (3) structural-risk context such as prevalence studies and national surveys. A historical incident or prevalence study can justify proportionate prevention without proving an active event at the user's exact location. Undated information is labelled for review; publication dates, event dates, and study periods are not interchangeable. A missing report is not evidence that an area is safe.
 
-The UK Police API does not provide Indonesian crime incidents. Public feed availability, data coverage, rate limits, and terms can change. A missing report is **not evidence that an area is safe**. Cached data and saved routes can become stale, and live data/new routes require connectivity. CivilAegis is an awareness aid, not an emergency dispatch system or an official warning source.
+The UK Police API is only queried where its geographic coverage applies; it is not a global police-crime feed. Public feed availability, data coverage, rate limits, and terms can change. A missing report is **not evidence that an area is safe**. Cached data and saved routes can become stale, and live data/new routes require connectivity. CivilAegis is an awareness aid, not an emergency dispatch system or an official warning source.
 
 ## Configure TinyFish and Cloudflare Worker
 
