@@ -116,104 +116,109 @@ export default {
             // Keep rounded coordinates as a broad-area fallback.
         }
 
-        const query = 'publicly reported crime, violence, murder, homicide, sexual assault, rape, sexual harassment, riots, mob violence, fatal clashes, deaths during unrest, pickpocketing, bag snatching, robbery, phone theft, scams, fraud, card skimming, road accidents, traffic crashes, flooding, fires and other public-safety incidents in ' +
-            locality + '. Cover incidents reported in the last 30 days and notable historical incidents up to 5 years ago. Include dates, approximate locality, incident type, source links, official statements where available, and whether people were reported injured or killed. Prefer police, courts, local government, emergency services, reputable local newsrooms and established national media. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not imply a historical incident is current, do not infer a specific person or address is involved, and do not invent events.';
+        const baseQuery = 'publicly reported crime, violence, murder, homicide, sexual assault, rape, sexual harassment, riots, mob violence, fatal clashes, deaths during unrest, pickpocketing, bag snatching, robbery, phone theft, scams, fraud, card skimming, road accidents, traffic crashes, flooding, fires and other public-safety incidents in ' +
+            locality + '. Include dates, approximate city/regency/municipality, source links, official statements where available, and reported injuries or fatalities. Prefer police, courts, local government, emergency services, reputable local newsrooms and established national media. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
         const timeWindows = [
-            { label: 'recent-30-days', query: 'recent last 30 days' },
-            { label: 'history-1-to-5-years', query: 'historical past 5 years notable incidents' }
+            { label: 'recent-30-days', query: 'published or occurred within the last 30 days', maxAgeDays: 30 },
+            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago', maxAgeDays: 730 },
+            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago', maxAgeDays: 1826 }
         ];
 
         try {
             const gathered = [];
             const seen = new Set();
+            let successfulSearches = 0;
             for (const window of timeWindows) {
-                const scopedQuery = query + ' Search window: ' + window.query + '. Label this window as ' + window.label + '.';
+                const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
+                    '. This is the ' + window.label + ' window. Return publication/event date when available.';
                 const searchUrl = new URL('https://api.search.tinyfish.ai/');
                 searchUrl.searchParams.set('query', scopedQuery);
                 const searchResponse = await fetch(searchUrl.toString(), {
-                    headers: {
-                        'X-API-Key': env.TINYFISH_API_KEY,
-                        'Accept': 'application/json'
-                    }
+                    headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' }
                 });
-                if (!searchResponse.ok) {
-                    // A failed historic search should not discard current reports (or vice versa).
-                    continue;
-                }
-
+                if (!searchResponse.ok) continue;
+                successfulSearches += 1;
                 const payload = await searchResponse.json();
                 extractResults(payload).forEach(function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
-                    if (!/^https?:\/\//i.test(targetUrl)) return;
+                    if (!/^https?:\\/\\//i.test(targetUrl)) return;
                     const key = targetUrl.toLowerCase();
                     if (seen.has(key)) return;
+
+                    const title = String(item.title || item.name || 'Local public-safety report');
+                    const snippet = String(item.snippet || item.description || item.content || '');
+                    const text = (title + ' ' + snippet).toLowerCase();
+                    let category = 'public_safety';
+                    if (/rape|sexual assault|sexual violence|molest|sexual harassment/.test(text)) category = 'sexual_violence';
+                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash/.test(text)) category = 'homicide_or_fatality';
+                    else if (/riot|unrest|mob violence|clash|communal violence/.test(text)) category = 'unrest';
+                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone/.test(text)) category = 'theft';
+                    else if (/scam|fraud|card skimming|carding|phishing/.test(text)) category = 'scam_or_fraud';
+                    else if (/accident|crash|collision|hit-and-run/.test(text)) category = 'road_accident';
+                    else if (/flood|inundation|landslide|earthquake|volcan/.test(text)) category = 'disaster';
+
+                    const rawDate = item.publishedAt || item.published_at || item.date || item.pubDate || null;
+                    let publishedAt = rawDate;
+                    let ageYears = null;
+                    let dateStatus = 'Publication date unconfirmed';
+                    if (rawDate) {
+                        const dateMs = Date.parse(String(rawDate));
+                        if (Number.isFinite(dateMs)) {
+                            ageYears = Math.max(0, (Date.now() - dateMs) / (365.2425 * 24 * 60 * 60 * 1000));
+                            publishedAt = new Date(dateMs).toISOString();
+                            dateStatus = 'Publication date parsed';
+                        } else {
+                            dateStatus = 'Date supplied but not parseable';
+                        }
+                    }
+                    if (ageYears !== null && ageYears > 5) return;
+                    if (ageYears !== null && ageYears * 365.2425 > window.maxAgeDays + 60) return;
                     seen.add(key);
                     let source = '';
-                    try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
-                    const publishedAt = item.publishedAt || item.published_at || item.date || null;
-                    const snippet = String(item.snippet || item.description || item.content || '');
-                    const title = String(item.title || item.name || 'Local public-safety report');
-                    const combined = (title + ' ' + snippet).toLowerCase();
-                    let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|harass/.test(combined)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash/.test(combined)) category = 'homicide_or_fatality';
-                    else if (/riot|unrest|mob violence|clash|communal violence/.test(combined)) category = 'unrest';
-                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone/.test(combined)) category = 'theft';
-                    else if (/scam|fraud|card skimming|carding|phishing/.test(combined)) category = 'scam_or_fraud';
-                    else if (/accident|crash|collision|hit-and-run/.test(combined)) category = 'road_accident';
-                    else if (/flood|inundation|landslide|earthquake|volcan/.test(combined)) category = 'disaster';
-                    let ageYears = null;
-                    if (publishedAt) {
-                        const parsed = Date.parse(String(publishedAt));
-                        if (Number.isFinite(parsed)) ageYears = Math.max(0, (Date.now() - parsed) / (365.2425 * 24 * 60 * 60 * 1000));
-                    }
+                    try { source = new URL(targetUrl).hostname.replace(/^www\\./, ''); } catch (_) {}
                     gathered.push({
-                        id: key,
-                        title: title,
-                        snippet: snippet,
-                        url: targetUrl,
-                        source: source || 'TinyFish Search',
-                        area: locality,
-                        publishedAt: publishedAt,
-                        ageYears: ageYears,
-                        searchWindow: window.label,
-                        category: category,
-                        verified: false,
-                        recencyLabel: ageYears === null ? 'Date not confirmed' :
-                            ageYears < (30 / 365.2425) ? 'Reported within ~30 days' :
-                            ageYears < 1 ? 'Historical · under 1 year' :
-                            ageYears < 2 ? 'Historical · 1–2 years' :
-                            ageYears < 5 ? 'Historical · 2–5 years' : 'Outside awareness window'
+                        id: key, title: title, snippet: snippet, url: targetUrl,
+                        source: source || 'TinyFish Search', area: locality,
+                        publishedAt: publishedAt, ageYears: ageYears,
+                        searchWindow: window.label, dateStatus: dateStatus,
+                        category: category, verified: false,
+                        recencyLabel: ageYears === null ? 'Publication date unconfirmed' :
+                            ageYears <= (30 / 365.2425) ? 'Recent · up to 30 days' :
+                            ageYears <= 2 ? 'Historical · 30 days to 2 years' : 'Historical · 2 to 5 years'
                     });
                 });
             }
 
-            const now = Date.now();
-            const recent = [];
-            const historic = [];
+            const recentResults = [];
+            const mediumTermResults = [];
+            const longTermResults = [];
+            const undatedResults = [];
             gathered.forEach(function (item) {
-                if (item.ageYears === null || item.ageYears <= (30 / 365.2425)) recent.push(item);
-                else if (item.ageYears <= 5) historic.push(item);
+                if (item.ageYears === null) undatedResults.push(item);
+                else if (item.ageYears <= (30 / 365.2425)) recentResults.push(item);
+                else if (item.ageYears <= 2) mediumTermResults.push(item);
+                else if (item.ageYears <= 5) longTermResults.push(item);
             });
-            // Prioritize timely information, while preserving a separate historical-awareness section in the response.
             const responseBody = {
-                area: locality,
-                radiusType: 'municipality/city/regency',
-                generatedAt: new Date().toISOString(),
-                recentResults: recent.slice(0, 8),
-                historicalResults: historic.slice(0, 12),
-                results: recent.concat(historic).slice(0, 20),
-                note: 'TinyFish search/media leads are not independently verified incident records and are not precisely geolocated. Dates and outcomes must be checked at the original source. A historical report is not a claim of current danger.'
+                area: locality, radiusType: 'municipality/city/regency',
+                generatedAt: new Date().toISOString(), successfulSearches: successfulSearches,
+                recentResults: recentResults.slice(0, 8),
+                mediumTermResults: mediumTermResults.slice(0, 8),
+                longTermResults: longTermResults.slice(0, 8),
+                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
+                undatedResults: undatedResults.slice(0, 8),
+                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
+                note: 'TinyFish search/media leads are not independently verified and are not precisely geolocated. Publication dates may differ from incident dates. Verify original sources; historical reports do not imply current danger.'
             };
-
+            if (!successfulSearches) {
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], recentResults: [], historicalResults: [], successfulSearches: 0 }, 502, corsOrigin);
+            }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
                     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
                 });
                 ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-            } catch (_) {
-                // Search response remains useful when edge caching is unavailable.
-            }
+            } catch (_) {}
             return jsonResponse(responseBody, 200, corsOrigin);
         } catch (_) {
             return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
