@@ -90,6 +90,7 @@
         .marker-haze { background-color:#64748b; }
         .marker-wind { background-color:#0891b2; }
         .marker-disaster { background-color:#b45309; }
+        .marker-global-disaster { background-color:#be123c; }
         .route-planner { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin:0 0 10px; }
         .route-input { width:100%; min-width:0; border:1px solid #cbd5e1; border-radius:9px; padding:9px 10px; font-size:11px; outline:none; background:#fff; color:#0f172a; }
         .route-input:focus { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.12); }
@@ -253,6 +254,7 @@
                             <div id="route-summary" class="route-summary hidden">
                                 <div id="route-summary-main" class="text-sm font-extrabold text-blue-900"></div>
                                 <div id="route-summary-meta" class="text-[10px] text-blue-800 mt-1"></div>
+                                <div id="route-weather" class="mt-2 text-[10px] leading-relaxed text-slate-700"></div>
                                 <a id="route-google-link" class="inline-block text-[10px] font-bold text-blue-700 underline mt-2" href="#" target="_blank" rel="noopener noreferrer">Open in Google Maps ↗</a>
                             </div>
                             <div id="route-alternatives" class="mt-1"></div>
@@ -273,6 +275,8 @@
                             <p class="font-bold text-slate-700 mb-1">Source status</p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>BMKG · official earthquakes</span><span id="status-bmkg" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>USGS · global earthquakes</span><span id="status-usgs" class="source-state neutral">Waiting</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>GDACS · global disaster alerts</span><span id="status-gdacs" class="source-state neutral">Waiting</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>Open-Meteo · forecast at route destination</span><span id="status-weather" class="source-state neutral">On route</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>PetaBencana · community reports</span><span id="status-petabencana" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>OpenStreetMap · facilities</span><span id="status-osm" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>TinyFish · local news search</span><span id="status-tinyfish" class="source-state neutral">Optional</span></p>
@@ -378,6 +382,7 @@
             haze: { color: 'marker-haze', hex: '#64748b', icon: 'fa-smog', name: 'Haze report', source: 'PetaBencana' },
             wind: { color: 'marker-wind', hex: '#0891b2', icon: 'fa-wind', name: 'Wind report', source: 'PetaBencana' },
             disaster: { color: 'marker-disaster', hex: '#b45309', icon: 'fa-triangle-exclamation', name: 'Disaster report', source: 'PetaBencana' },
+            global_disaster: { color: 'marker-global-disaster', hex: '#be123c', icon: 'fa-earth-americas', name: 'Global disaster alert', source: 'GDACS' },
             news: { color: 'marker-news', hex: '#eab308', icon: 'fa-newspaper', name: 'Legacy news signal', source: 'Previous saved report' },
             police: { color: 'marker-police', hex: '#3b82f6', icon: 'fa-building-shield', name: 'Police Station', source: 'OpenStreetMap' },
             hospital: { color: 'marker-hospital', hex: '#ef4444', icon: 'fa-truck-medical', name: 'Hospital', source: 'OpenStreetMap' },
@@ -530,7 +535,7 @@
         // --- REAL API DATA FETCHING ---
         async function fetchRealData(lat, lng) {
             incidents = [];
-            ['bmkg', 'petabencana', 'usgs', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
+            ['bmkg', 'petabencana', 'usgs', 'gdacs', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
 
             const tasks = [
                 (async () => {
@@ -599,6 +604,58 @@
                 })(),
                 (async () => {
                     try {
+                (async () => {
+                    try {
+                        const endDate = new Date();
+                        const startDate = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+                        const dateString = date => date.toISOString().slice(0, 10);
+                        const endpoint = new URL('https://www.gdacs.org/gdacsapi/api/Events/geteventlist/SEARCH');
+                        endpoint.searchParams.set('eventlist', 'EQ;TC;FL;VO;WF');
+                        endpoint.searchParams.set('fromdate', dateString(startDate));
+                        endpoint.searchParams.set('todate', dateString(endDate));
+                        endpoint.searchParams.set('alertlevel', 'red;orange');
+                        const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        const payload = await response.json();
+                        const features = Array.isArray(payload.features) ? payload.features :
+                            (payload.result && Array.isArray(payload.result.features) ? payload.result.features : []);
+                        if (!features.length && payload.type !== 'FeatureCollection' && !payload.result) {
+                            throw new Error('Unexpected GDACS response format');
+                        }
+                        let nearbyCount = 0;
+                        features.forEach((feature, index) => {
+                            const geometry = feature.geometry || {};
+                            const props = feature.properties || {};
+                            if (geometry.type !== 'Point' || !Array.isArray(geometry.coordinates)) return;
+                            const eventLng = Number(geometry.coordinates[0]);
+                            const eventLat = Number(geometry.coordinates[1]);
+                            if (!Number.isFinite(eventLat) || !Number.isFinite(eventLng)) return;
+                            const dist = calculateDistance(lat, lng, eventLat, eventLng);
+                            const stamp = props.fromdate || props.todate || props.fromDate || new Date().toISOString();
+                            const eventType = String(props.eventtype || props.eventType || '').toUpperCase();
+                            const alertLevel = String(props.alertlevel || props.alertLevel || 'alert').toUpperCase();
+                            const eventName = String(props.name || props.title || props.eventname || 'Global disaster event');
+                            const eventUrl = safeHttpUrl(props.url || props.link || props.htmllink) || 'https://www.gdacs.org/';
+                            const report = {
+                                id: 'gdacs_' + String(props.eventid || props.eventId || eventType + '_' + index),
+                                type: 'global_disaster',
+                                title: 'GDACS ' + alertLevel + ' · ' + eventName,
+                                desc: 'Global disaster alert (' + (eventType || 'multi-hazard') + '). This is an alert signal; check the source for affected areas and current status.',
+                                lat: eventLat, lng: eventLng, dist: dist,
+                                timeText: formatRelativeTime(stamp), timestamp: stamp,
+                                sourceName: 'GDACS Global Disaster Alerts',
+                                sourceUrl: eventUrl,
+                                confidenceLabel: 'Global alert · check official situation updates'
+                            };
+                            routeHazardCandidates.push(report);
+                            if (dist <= 250 && addIncidentIfUnique(report)) nearbyCount++;
+                        });
+                        updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                    } catch (error) {
+                        console.warn('GDACS fetch failed:', error);
+                        updateSourceStatus('gdacs', 'Unavailable', 'error');
+                    }
+                })(),
                         const endpoint = 'https://api.petabencana.id/reports?geoformat=geojson&timeperiod=21600';
                         const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
                         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -940,7 +997,7 @@
             if (!container) return;
             container.innerHTML = '';
 
-            const disasterTypes = ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster'];
+            const disasterTypes = ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster'];
             const filtered = filterType === 'all'
                 ? incidents
                 : filterType === 'safezone'
@@ -1126,7 +1183,7 @@
         }
 
         function isHazardForRouting(inc) {
-            return ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'accident', 'crime', 'news_event'].includes(inc.type);
+            return ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster', 'accident', 'crime', 'news_event'].includes(inc.type);
         }
 
         function distanceFromPointToRouteMeters(pointLat, pointLng, coordinates) {
@@ -1254,6 +1311,7 @@
             renderRouteAlternatives();
             renderRouteWarnings();
             renderRouteSteps(route.legs);
+            fetchRouteWeather(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
             setRouteStatus('Prototype route only: static directions, no continuous GPS tracking or automatic rerouting. Estimates and hazard coverage are not guaranteed.', 'warning');
         }
 
@@ -1342,6 +1400,53 @@
             });
         }
 
+        async function fetchRouteWeather(lat, lng, placeLabel) {
+            const panel = document.getElementById('route-weather');
+            panel.textContent = 'Checking weather forecast at destination…';
+            updateSourceStatus('weather', 'Checking…', 'neutral');
+            try {
+                const endpoint = new URL('https://api.open-meteo.com/v1/forecast');
+                endpoint.searchParams.set('latitude', String(lat));
+                endpoint.searchParams.set('longitude', String(lng));
+                endpoint.searchParams.set('hourly', 'precipitation,precipitation_probability,weather_code,wind_speed_10m');
+                endpoint.searchParams.set('forecast_days', '2');
+                endpoint.searchParams.set('timeformat', 'unixtime');
+                endpoint.searchParams.set('timezone', 'GMT');
+                const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('Open-Meteo HTTP ' + response.status);
+                const payload = await response.json();
+                const hourly = payload.hourly || {};
+                const times = hourly.time || [];
+                const rain = hourly.precipitation || [];
+                const chances = hourly.precipitation_probability || [];
+                const winds = hourly.wind_speed_10m || [];
+                const now = Math.floor(Date.now() / 1000);
+                const sixHours = 6 * 60 * 60;
+                const futureIndexes = times.map((time, index) => ({ time: Number(time), index: index }))
+                    .filter(item => item.time >= now && item.time <= now + sixHours);
+                if (!futureIndexes.length) throw new Error('No upcoming hourly weather data available');
+                let totalRain = 0, maxChance = null, maxWind = null;
+                futureIndexes.forEach(item => {
+                    const rainVal = Number(rain[item.index]);
+                    const chanceVal = Number(chances[item.index]);
+                    const windVal = Number(winds[item.index]);
+                    if (Number.isFinite(rainVal)) totalRain += rainVal;
+                    if (Number.isFinite(chanceVal)) maxChance = maxChance === null ? chanceVal : Math.max(maxChance, chanceVal);
+                    if (Number.isFinite(windVal)) maxWind = maxWind === null ? windVal : Math.max(maxWind, windVal);
+                });
+                const rainText = totalRain.toFixed(1) + ' mm forecast over the next 6 hours';
+                const chanceText = maxChance === null ? '' : ' · rain chance up to ' + Math.round(maxChance) + '%';
+                const windText = maxWind === null ? '' : ' · wind up to ' + Math.round(maxWind) + ' km/h';
+                panel.textContent = 'Weather at ' + (placeLabel || 'destination') + ': ' + rainText + chanceText + windText +
+                    '. Forecast context only—not a flood, road-closure, or evacuation warning. Source: Open-Meteo.';
+                updateSourceStatus('weather', 'Loaded · forecast', 'ok');
+            } catch (error) {
+                console.warn('Weather forecast failed:', error);
+                panel.textContent = 'Weather forecast unavailable. Check BMKG/local weather warnings before travelling.';
+                updateSourceStatus('weather', 'Unavailable', 'error');
+            }
+        }
+
         function onRouteBufferChange() {
             const input = document.getElementById('route-alert-radius');
             routeBufferMeters = input ? Number(input.value) : 1000;
@@ -1364,6 +1469,8 @@
             document.getElementById('route-alternatives').innerHTML = '';
             document.getElementById('route-alerts').innerHTML = '';
             document.getElementById('route-steps').innerHTML = '';
+            document.getElementById('route-weather').textContent = '';
+            updateSourceStatus('weather', 'On route', 'neutral');
             document.getElementById('route-destination').value = '';
             const pickButton = document.getElementById('pick-destination-btn');
             if (pickButton) pickButton.classList.remove('active');
