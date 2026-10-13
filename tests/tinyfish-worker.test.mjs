@@ -6,7 +6,7 @@ const workerSource = await readFile(new URL('../tinyfish-worker.js', import.meta
 const workerModule = await import('data:text/javascript;base64,' + Buffer.from(workerSource).toString('base64'));
 const worker = workerModule.default;
 
-async function runWorker(rowsByPass) {
+async function runWorker(rowsByPass, sourcePages = {}) {
   const originalFetch = globalThis.fetch;
   const originalCaches = globalThis.caches;
   let searchIndex = 0;
@@ -36,7 +36,21 @@ async function runWorker(rowsByPass) {
       });
     }
 
-    throw new Error('Unexpected fetch in test: ' + requestUrl.href);
+    const page = sourcePages[requestUrl.href] || sourcePages[requestUrl.origin + requestUrl.pathname];
+    if (page !== undefined) {
+      if (typeof page === 'string') {
+        return new Response(page, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+      return new Response(page.body || '', {
+        status: page.status || 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...(page.headers || {}) }
+      });
+    }
+
+    return new Response('Not found in test fixture', { status: 404 });
   };
 
   try {
@@ -78,12 +92,40 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
     }]
   ]);
 
-  assert.equal(body.filterVersion, 5);
-  assert.equal(body.buildVersion, 'timeline-v5-dated-dedupe');
+  assert.equal(body.filterVersion, 6);
+  assert.equal(body.buildVersion, 'timeline-v5.1-source-dates');
   assert.equal(body.results.length, 0, 'dated historical evidence should remove the undated duplicate');
   assert.equal(body.undatedResults.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
   assert.ok(body.diagnostics.duplicateCount >= 1);
+});
+
+test('original article metadata filters the January 2016 Jakarta blast lead', async () => {
+  const cnnLink = 'http://cnn.it/1UQuTRZ';
+  const facebookUrl = 'https://www.facebook.com/cnn/videos/jakarta-at-least-4-people-dead-after-blasts/10154379872021509/';
+  const html = '<!doctype html><html><head>' +
+    '<meta content="2016-01-14T03:30:00Z" property="article:published_time">' +
+    '<meta name="description" content="Deadly explosions in Jakarta on January 14, 2016.">' +
+    '</head><body><article>Deadly explosions in Jakarta on January 14, 2016 killed several people.</article></body></html>';
+  const body = await runWorker([
+    [{
+      title: 'Jakarta: At least 4 people dead after blasts',
+      snippet: 'BREAKING: Police confirm explosions in #Jakarta, Indonesia. Developing story: ' + cnnLink + '.',
+      url: facebookUrl
+    }],
+    [],
+    []
+  ], {
+    [cnnLink]: html,
+    ['https://cnn.it/1UQuTRZ']: html
+  });
+
+  assert.equal(body.results.length, 0, 'the original article date should keep the 2016 event out of the five-year window');
+  assert.equal(body.undatedResults.length, 0);
+  assert.ok(body.diagnostics.originalSourceFetchCount >= 1);
+  assert.ok(body.diagnostics.originalSourcePageReadCount >= 1);
+  assert.ok(body.diagnostics.originalSourceDateEnrichedCount >= 1);
+  assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
 });
 
 test('deduplication keeps the best dated copy and result buckets remain disjoint', async () => {
@@ -98,9 +140,7 @@ test('deduplication keeps the best dated copy and result buckets remain disjoint
     [{
       title: 'Jakarta theft incident reported',
       snippet: 'Police reported a theft incident in Jakarta, Indonesia. Event date: ' + eventDate,
-      url: 'https://example.com/jakarta-theft-report'
-        .replace('/jakarta-theft-report', '/jakarta-theft-report')
-        + '?utm_medium=search',
+      url: 'https://example.com/jakarta-theft-report?utm_medium=search',
       eventDate,
       publishedAt: eventDate
     }],
@@ -124,6 +164,48 @@ test('deduplication keeps the best dated copy and result buckets remain disjoint
     body.results.length,
     body.recentResults.length + body.mediumTermResults.length + body.longTermResults.length + body.undatedResults.length
   );
+});
+
+test('source page metadata separates publication date from incident date and classifies unrest', async () => {
+  const url = 'https://localnews.example/jakarta-protests';
+  const publicationDate = '2025-08-29T00:00:00Z';
+  const eventDate = '2025-08-28T00:00:00Z';
+  const html = '<!doctype html><html><head>' +
+    '<meta property="article:published_time" content="' + publicationDate + '">' +
+    '</head><body><article>The fatal road incident occurred on August 28, 2025. Demonstrations continued in Jakarta.</article></body></html>';
+  const body = await runWorker([
+    [{
+      title: 'Situation remains tense in Jakarta as protests continue',
+      snippet: 'Demonstrations in Jakarta continued after the fatal road incident.',
+      url
+    }],
+    [],
+    []
+  ], { [url]: html });
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].eventDate, eventDate);
+  assert.equal(body.results[0].publishedAt, publicationDate);
+  assert.equal(body.results[0].category, 'unrest');
+  assert.ok(body.results[0].incidentTags.includes('unrest'));
+  assert.ok(body.results[0].incidentTags.includes('fatality'));
+  assert.equal(body.results[0].dateEnrichmentSource, 'original-source-metadata-or-body');
+});
+
+test('fatal assault headlines receive a specific fatality category', async () => {
+  const body = await runWorker([
+    [{
+      title: 'Jakarta police confirm fatal assault incident in South Jakarta',
+      snippet: 'The victim died after being attacked in Jakarta.',
+      url: 'https://example.com/jakarta-fatal-assault'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].category, 'homicide_or_fatality');
+  assert.ok(body.results[0].incidentTags.includes('fatality'));
 });
 
 test('year-only incident dates are treated as approximate and old years are rejected', async () => {
