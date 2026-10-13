@@ -684,9 +684,6 @@
             incidents.sort((a, b) => a.dist - b.dist);
         }
 
-cidents.sort((a, b) => a.dist - b.dist);
-        }
-
         async function fetchTinyFishIntel(lat, lng) {
             if (!TINYFISH_PROXY_URL) {
                 updateSourceStatus('tinyfish', 'Worker not configured', 'neutral');
