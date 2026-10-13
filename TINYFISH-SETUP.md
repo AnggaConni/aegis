@@ -49,16 +49,17 @@ There is no integrated global open, real-time crime-incident API in this impleme
 
 ## Other feeds
 
-- BMKG — Indonesian earthquake bulletin.
-- USGS — global recent earthquakes.
-- GDACS — global disaster alert signals.
-- PetaBencana — community-submitted disaster reports in Indonesia.
+- BMKG — Indonesian latest earthquake, recent M5+ earthquake list, and felt-earthquake list. The app only elevates entries with timestamps within 72 hours into live hazard/route data.
+- USGS — global M2.5+ earthquakes in the past day; significant/recent records may support regional context when magnitude or felt/intensity metadata warrants it.
+- GDACS — global disaster alert signals; currently queried for red/orange alerts over the prior 14 days.
+- NASA EONET — global open natural-event metadata over the prior 7 days. The current integration uses point geometries only and skips polygons to avoid treating a polygon centroid as an exact incident location.
+- PetaBencana — community-submitted disaster reports in Indonesia, queried over the most recent 6 hours. These are community signals, not official confirmation.
 - OpenStreetMap Overpass — nearby police, hospital, and fire-station points.
 - Open-Meteo — forecast context; not a flood/road-closure warning.
 - OSRM public demo — driving routes and turn instructions.
 - Nominatim — explicit destination search.
 
-A failed feed is unavailable data, not evidence that an area is safe.
+The overview distinguishes mapped hazards within 10 km from selected regional signals out to 50 km. Regional earthquake signals are shown when recent magnitude, felt-report, tsunami-potential, or intensity metadata warrants context; this is not a local shaking prediction. Current-event freshness checks suppress undated records and older local snapshots from being presented as live signals. The route planner drops stale candidates on refresh and only restores cached candidates when the corresponding feed is unavailable. A failed feed is unavailable data, not evidence that an area is safe.
 
 ## Routes and offline use
 
