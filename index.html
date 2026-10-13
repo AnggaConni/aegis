@@ -1631,7 +1631,9 @@
 
             titleNode.textContent = heading;
             tagNode.className = 'personalized-label';
-            tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' : signal.kind === 'web' ? 'VERIFY SOURCE' : 'MAPPED REPORT') : 'GENERAL';
+            tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' :
+                signal.kind === 'web' ? (signal.item.recencyLabel && signal.item.recencyLabel !== 'Reported within ~30 days' ? signal.item.recencyLabel.toUpperCase() : 'VERIFY SOURCE') :
+                'MAPPED REPORT') : 'GENERAL';
             if (signal && signal.kind === 'web') tagNode.classList.add('attention');
             copyNode.textContent = summary;
             tipsNode.innerHTML = '';
@@ -1643,7 +1645,9 @@
 
             evidenceNode.textContent = signal
                 ? 'Signal: ' + (title || category) + ' · ' + (signal.item.area || signal.item.sourceName || signal.confidence || 'local source') +
-                    (signal.item.publishedAt ? ' · published ' + String(signal.item.publishedAt) : signal.item.timeText ? ' · ' + signal.item.timeText : '')
+                    (signal.item.publishedAt ? ' · reported/published ' + String(signal.item.publishedAt) : signal.item.timeText ? ' · ' + signal.item.timeText : ' · publication date unavailable') +
+                    (signal.item.recencyLabel ? ' · ' + signal.item.recencyLabel : '') +
+                    (signal.item.searchWindow ? ' · search: ' + signal.item.searchWindow : '')
                 : 'Basis: current mapped reports and nearby facilities. No confirmed crime alert is available from a nationwide Indonesian open crime feed.';
 
             servicesNode.innerHTML = '';
