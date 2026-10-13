@@ -92,8 +92,8 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
     }]
   ]);
 
-  assert.equal(body.filterVersion, 7);
-  assert.equal(body.buildVersion, 'timeline-v5.2-context-dates');
+  assert.equal(body.filterVersion, 8);
+  assert.equal(body.buildVersion, 'timeline-v5.2.1-context-dates');
   assert.equal(body.results.length, 0, 'dated historical evidence should remove the undated duplicate');
   assert.equal(body.undatedResults.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
@@ -273,4 +273,130 @@ test('fatality tags recognize plural deaths in protest-related reports', async (
   assert.equal(body.results[0].category, 'unrest');
   assert.ok(body.results[0].incidentTags.includes('unrest'));
   assert.ok(body.results[0].incidentTags.includes('fatality'));
+});
+
+
+test('explicit date-first wording captures the incident date', async () => {
+  const publishedAt = '2025-08-30T00:00:00.000Z';
+  const body = await runWorker([
+    [{
+      title: 'Fatal clash in Jakarta',
+      snippet: 'On August 28, 2025, a 23-year-old man was killed after a street clash in central Jakarta.',
+      publishedAt,
+      url: 'https://example.com/jakarta-clash-2025-08-28'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].eventDate, '2025-08-28T00:00:00.000Z');
+  assert.equal(body.results[0].publishedAt, publishedAt);
+  assert.equal(body.results[0].timelineBasis, 'event-date');
+  assert.equal(body.diagnostics.eventDateCount, 1);
+  assert.equal(body.diagnostics.eventDateUnconfirmedCount, 0);
+});
+
+test('relative event dates are labelled approximate and not confused with publication date', async () => {
+  const publishedAt = new Date().toISOString();
+  const expectedDay = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const body = await runWorker([
+    [{
+      title: 'Jakarta fatal assault investigation',
+      snippet: 'Police said the victim died two days ago after being attacked in South Jakarta.',
+      publishedAt,
+      url: 'https://example.com/jakarta-fatal-assault-relative'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].eventDate.slice(0, 10), expectedDay);
+  assert.equal(body.results[0].eventDatePrecision, 'relative-estimate');
+  assert.equal(body.results[0].publishedAt, publishedAt);
+  assert.equal(body.results[0].timelineBasis, 'event-date');
+  assert.equal(body.diagnostics.eventDateCount, 1);
+});
+
+test('weekday-only incident dates resolve only against an absolute publication date', async () => {
+  const publishedAt = '2025-08-30T00:00:00.000Z'; // Saturday; the preceding Thursday is 28 August.
+  const body = await runWorker([
+    [{
+      title: 'Protests escalate in Jakarta after a driver is killed',
+      snippet: 'On Thursday, a 21-year-old ride-hailing driver was run over by an armored police vehicle in Jakarta.',
+      publishedAt,
+      url: 'https://example.com/jakarta-driver-thursday'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].eventDate.slice(0, 10), '2025-08-28');
+  assert.equal(body.results[0].eventDatePrecision, 'relative-estimate');
+  assert.match(body.results[0].eventDateStatus, /weekday-inferred-from-publication-date|context-matched-in-original-source/);
+});
+
+test('the start date of a protest series is not mislabelled as an individual incident date', async () => {
+  const publishedAt = '2025-08-29T00:00:00.000Z';
+  const body = await runWorker([
+    [{
+      title: 'Nationwide protests started on August 15, 2025 in Indonesia.',
+      snippet: 'Demonstrations continued in Jakarta through the week.',
+      publishedAt,
+      url: 'https://example.com/jakarta-protests-series-start'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].eventDate, null);
+  assert.equal(body.results[0].timelineBasis, 'publication-date-proxy');
+  assert.equal(body.diagnostics.eventDateCount, 0);
+  assert.equal(body.diagnostics.eventDateUnconfirmedCount, 1);
+});
+
+test('general crime roundups are filtered while concrete investigations remain', async () => {
+  const body = await runWorker([
+    [
+      {
+        title: 'LIVE - Robbers "Haunt" Jakarta | INVESTIGATION DIPO',
+        snippet: 'A roundup of recurring street crime in Jakarta: begal, penjambretan, and theft reports.',
+        url: 'https://www.youtube.com/watch?v=generic-jakarta-crime-roundup'
+      },
+      {
+        title: 'Jakarta residents welcome an anti-crime crackdown',
+        snippet: 'This report describes a police campaign against street crime in Jakarta, without a specific incident.',
+        url: 'https://example.com/jakarta-anti-crime-campaign'
+      },
+      {
+        title: 'Jakarta police arrest two suspects after a fatal robbery',
+        snippet: 'Police in Jakarta arrested two suspects in a fatal robbery investigation on Tuesday.',
+        url: 'https://example.com/jakarta-fatal-robbery-investigation'
+      }
+    ],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].title, 'Jakarta police arrest two suspects after a fatal robbery');
+  assert.ok(body.diagnostics.rejectedGenericReferenceCount >= 2);
+});
+
+test('timeline bucket arrays include all unique results beyond the former eight-item limit', async () => {
+  const publishedAt = new Date(Date.now() - 60 * 86400000).toISOString();
+  const rows = Array.from({ length: 10 }, (_, index) => ({
+    title: 'Jakarta theft incident report ' + (index + 1),
+    snippet: 'Police reported a distinct theft incident in Jakarta, Indonesia. Reference number ' + (index + 1) + '.',
+    publishedAt,
+    url: 'https://example.com/jakarta-theft-report-' + (index + 1)
+  }));
+  const body = await runWorker([rows, [], []]);
+
+  assert.equal(body.mediumTermResults.length, 10);
+  assert.equal(body.results.length, 10);
+  assert.equal(body.diagnostics.eventDateUnconfirmedCount, 10);
 });
