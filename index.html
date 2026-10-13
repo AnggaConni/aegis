@@ -470,10 +470,35 @@
             return false;
         }
 
+        function compactRouteOptions(routes) {
+            return (routes || []).map(route => ({
+                index: route.index || 0,
+                geometry: route.geometry,
+                distance: Number(route.distance || 0),
+                duration: Number(route.duration || 0),
+                warningCount: Number(route.warningCount !== undefined ? route.warningCount : ((route.warnings || []).length)),
+                warnings: [],
+                legs: (route.legs || []).map(leg => ({
+                    distance: Number(leg.distance || 0),
+                    duration: Number(leg.duration || 0),
+                    steps: (leg.steps || []).map(step => ({
+                        distance: Number(step.distance || 0),
+                        name: String(step.name || ''),
+                        mode: String(step.mode || ''),
+                        maneuver: {
+                            type: String((step.maneuver || {}).type || ''),
+                            modifier: String((step.maneuver || {}).modifier || ''),
+                            exit: (step.maneuver || {}).exit || null
+                        }
+                    }))
+                }))
+            }));
+        }
+
         function saveJourneyPlan() {
             if (!routePlanOrigin || !routeDestination || !routeOptions.length) return false;
             const routesForPlan = journeyPlan && journeyPlan.routes ? journeyPlan.routes : {};
-            routesForPlan[activeJourneyLeg] = routeOptions;
+            routesForPlan[activeJourneyLeg] = compactRouteOptions(routeOptions);
             const selectedIndexes = journeyPlan && journeyPlan.selectedIndexes ? journeyPlan.selectedIndexes : { outbound: 0, return: 0 };
             selectedIndexes[activeJourneyLeg] = selectedRouteIndex;
             journeyPlan = {
@@ -1391,7 +1416,8 @@
                 distance: Number(route.distance || 0),
                 duration: Number(route.duration || 0),
                 legs: route.legs || [],
-                warnings: getRouteWarnings(route.geometry.coordinates)
+                warnings: getRouteWarnings(route.geometry.coordinates),
+                warningCount: getRouteWarnings(route.geometry.coordinates).length
             }));
         }
 
@@ -1490,7 +1516,7 @@
                     origin: origin,
                     destination: destination,
                     destinationLabel: routeDestinationLabel,
-                    routes: { outbound: outboundRoutes, return: returnRoutes },
+                    routes: { outbound: compactRouteOptions(outboundRoutes), return: compactRouteOptions(returnRoutes) },
                     selectedIndexes: { outbound: 0, return: 0 },
                     activeLeg: 'outbound',
                     savedAt: new Date().toISOString(),
@@ -1675,7 +1701,7 @@
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'route-alt-btn' + (index === selectedRouteIndex ? ' active' : '');
-                button.textContent = 'Route ' + String.fromCharCode(65 + index) + ' · ' + formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' · ' + route.warnings.length + ' report(s) near route';
+                button.textContent = 'Route ' + String.fromCharCode(65 + index) + ' · ' + formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' · ' + Number(route.warningCount !== undefined ? route.warningCount : (route.warnings || []).length) + ' report(s) near route';
                 button.addEventListener('click', () => applyRouteOption(index, true));
                 container.appendChild(button);
             });
