@@ -1179,10 +1179,27 @@
                     area: String(row.area || localityLabel || 'Approximate search area'),
                     contextLabel: String(localityLabel || 'Current location'),
                     publishedAt: row.publishedAt || row.published_at || null,
+                    publishedAtRaw: row.publishedAtRaw || null,
+                    publicationDateLabel: String(row.publicationDateLabel || 'Publication date unconfirmed'),
+                    publicationDatePrecision: String(row.publicationDatePrecision || 'unconfirmed'),
+                    publicationAgeDays: row.publicationAgeDays !== null && row.publicationAgeDays !== undefined && Number.isFinite(Number(row.publicationAgeDays)) ? Number(row.publicationAgeDays) : null,
+                    eventDate: row.eventDate || null,
+                    eventDatePrecision: String(row.eventDatePrecision || 'unconfirmed'),
+                    eventDateStatus: String(row.eventDateStatus || 'event-date-unconfirmed'),
+                    eventDateLabel: String(row.eventDateLabel || 'Event date unconfirmed'),
+                    eventAgeDays: row.eventAgeDays !== null && row.eventAgeDays !== undefined && Number.isFinite(Number(row.eventAgeDays)) ? Number(row.eventAgeDays) : null,
                     ageYears: row.ageYears !== null && row.ageYears !== undefined && Number.isFinite(Number(row.ageYears)) ? Number(row.ageYears) : null,
-                    recencyLabel: String(row.recencyLabel || ''),
+                    timelineAgeDays: row.timelineAgeDays !== null && row.timelineAgeDays !== undefined && Number.isFinite(Number(row.timelineAgeDays)) ? Number(row.timelineAgeDays) : null,
+                    timelineBasis: String(row.timelineBasis || 'undated'),
+                    timelineBucket: String(row.timelineBucket || 'undated'),
+                    timelineLabel: String(row.timelineLabel || row.recencyLabel || 'Date unconfirmed'),
+                    recencyLabel: String(row.recencyLabel || row.timelineLabel || 'Date unconfirmed'),
                     searchWindow: String(row.searchWindow || ''),
                     dateStatus: String(row.dateStatus || ''),
+                    eventLocation: row.eventLocation || null,
+                    eventLocationScope: String(row.eventLocationScope || 'city-mentioned-context-unclear'),
+                    eventLocationStatus: String(row.eventLocationStatus || 'The event location is unconfirmed.'),
+                    locationEvidence: String(row.locationEvidence || ''),
                     category: String(row.category || classifySafetyText(String(row.title || '') + ' ' + String(row.snippet || ''))),
                     verified: false
                 })).filter(row => row.url);
@@ -1443,6 +1460,28 @@
             renderPersonalizedRecommendation();
         }
 
+        function getWebIntelTimelineBucket(article) {
+            if (article && ['recent-30-days', 'history-30-days-to-2-years', 'history-2-to-5-years', 'undated'].includes(article.timelineBucket)) {
+                return article.timelineBucket;
+            }
+            if (!article || article.ageYears === null || article.ageYears === undefined || article.ageYears === '' || !Number.isFinite(Number(article.ageYears))) {
+                return 'undated';
+            }
+            const days = Number(article.ageYears) * 365.2425;
+            if (days <= 30) return 'recent-30-days';
+            if (days <= 730.5) return 'history-30-days-to-2-years';
+            if (days <= 1826.25) return 'history-2-to-5-years';
+            return 'undated';
+        }
+
+        function getWebIntelScopeLabel(article) {
+            const scope = article && article.eventLocationScope;
+            if (scope === 'national-context') return 'National context · not a confirmed local incident';
+            if (scope === 'city-mentioned-location-unverified') return 'City-linked report · exact location unverified';
+            if (scope === 'city-mentioned-context-unclear') return 'City mentioned · event location unclear';
+            return 'Location unconfirmed';
+        }
+
         function classifySafetyText(value) {
             const text = String(value || '').toLowerCase();
             if (/(flood|flooding|flash flood|inundat|banjir|waterlogged|waterlogging)/.test(text)) return 'flood';
@@ -1461,7 +1500,6 @@
 
         function getRecommendationSignal() {
             const hazards = currentNearbyHazards(10);
-            // Immediate environmental hazards take priority over theft/media signals.
             const priorityHazard = hazards.find(item => ['flood', 'fire_event', 'earthquake', 'global_disaster', 'volcano'].includes(item.type));
             if (priorityHazard) {
                 const category = priorityHazard.type === 'fire_event' ? 'fire'
@@ -1474,16 +1512,16 @@
             const localWebSignals = webIntel.filter(article =>
                 !article.contextLabel || /current location|nearby|current area/i.test(article.contextLabel)
             );
+            const rank = article => {
+                const bucket = getWebIntelTimelineBucket(article);
+                if (bucket === 'recent-30-days') return 0;
+                if (bucket === 'history-30-days-to-2-years') return 1;
+                if (bucket === 'history-2-to-5-years') return 2;
+                return 3;
+            };
             const relevantArticle = localWebSignals
                 .filter(article => classifySafetyText(article.title + ' ' + article.snippet) !== 'general')
-                .sort((a, b) => {
-                    const bucket = article => {
-                        if (article.ageYears === null || article.ageYears === undefined || !Number.isFinite(Number(article.ageYears))) return 4;
-                        const age = Number(article.ageYears);
-                        return age <= (30 / 365.2425) ? 0 : age <= 2 ? 1 : age <= 5 ? 2 : 3;
-                    };
-                    return bucket(a) - bucket(b);
-                })[0];
+                .sort((a, b) => rank(a) - rank(b))[0];
             if (relevantArticle) {
                 return {
                     category: classifySafetyText(relevantArticle.title + ' ' + relevantArticle.snippet),
@@ -1502,9 +1540,6 @@
                     confidence: 'Historical, approximate police data'
                 };
             }
-
-            const accidentNews = localWebSignals.find(article => classifySafetyText(article.title + ' ' + article.snippet) === 'accident');
-            if (accidentNews) return { category: 'accident', item: accidentNews, kind: 'web', confidence: 'Unverified local news/search signal' };
             return null;
         }
 
@@ -1548,6 +1583,27 @@
             return true;
         }
 
+        function getWebSignalRecommendationContext(article) {
+            const bucket = getWebIntelTimelineBucket(article);
+            const scope = article && article.eventLocationScope;
+            const locationText = scope === 'national-context'
+                ? 'The source discusses a national or multi-location event and mentions this city; it does not confirm a specific incident at your current location.'
+                : scope === 'city-mentioned-context-unclear'
+                    ? 'The city is mentioned in the article, but the exact event location is unclear.'
+                    : 'The result links the city to the topic, but the exact incident location has not been independently confirmed.';
+            if (bucket === 'undated') {
+                return 'TinyFish found a relevant search result, but its publication/event date could not be confirmed. Do not treat it as a current alert. ' + locationText;
+            }
+            if (bucket === 'history-30-days-to-2-years' || bucket === 'history-2-to-5-years') {
+                return 'This is historical awareness context. ' + (article.timelineLabel || article.recencyLabel || 'The result has an older date') + '. ' +
+                    (article.timelineBasis === 'event-date'
+                        ? 'An event date is supplied by the result, but should still be checked at the original source.'
+                        : 'Only the article publication date is available; the event date is unconfirmed.') + ' ' + locationText;
+            }
+            return 'TinyFish returned a recently dated article related to ' + String(article.category || 'public safety') +
+                '. Recent publication does not prove the incident happened recently. ' + locationText;
+        }
+
         function renderPersonalizedRecommendation() {
             const container = document.getElementById('personalized-recommendation');
             if (!container) return;
@@ -1568,13 +1624,13 @@
             let facilities = ['police', 'hospital'];
 
             if (category === 'theft' || category === 'violence' || category === 'crime' || category === 'sexual_violence' || category === 'homicide' || category === 'unrest') {
-                heading = category === 'theft' ? 'Theft or pickpocketing signal'
-                    : category === 'sexual_violence' ? 'Sexual-violence awareness signal'
-                    : category === 'homicide' ? 'Historical homicide or fatal-incident awareness'
+                heading = category === 'theft' ? 'Theft or pickpocketing awareness'
+                    : category === 'sexual_violence' ? 'Sexual-violence awareness'
+                    : category === 'homicide' ? 'Homicide or fatal-incident awareness'
                     : category === 'unrest' ? 'Public unrest or violent-clash awareness'
-                    : category === 'violence' ? 'Violence-related signal' : 'Crime-related signal';
+                    : category === 'violence' ? 'Violence-related awareness' : 'Crime-related awareness';
                 summary = signal.kind === 'web'
-                    ? 'TinyFish returned a local search result mentioning ' + category + '. Treat this as an unverified lead, not a confirmed crime alert.'
+                    ? getWebSignalRecommendationContext(signal.item)
                     : signal.kind === 'crimeApi'
                         ? 'Police open data contains a recorded crime near this point. UK street-level locations are approximate and the records are historical, not real-time alerts.'
                         : 'A mapped crime-related report is available. Check the source, timestamp, and precise area before acting.';
@@ -1651,7 +1707,9 @@
             titleNode.textContent = heading;
             tagNode.className = 'personalized-label';
             tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' :
-                signal.kind === 'web' ? (signal.item.recencyLabel && signal.item.recencyLabel !== 'Reported within ~30 days' ? signal.item.recencyLabel.toUpperCase() : 'VERIFY SOURCE') :
+                signal.kind === 'web' ? (getWebIntelTimelineBucket(signal.item) === 'undated' ? 'DATE UNCONFIRMED' :
+                    getWebIntelTimelineBucket(signal.item).startsWith('history') ? 'HISTORICAL CONTEXT' :
+                    signal.item.eventLocationScope === 'national-context' ? 'NATIONAL CONTEXT' : 'VERIFY SOURCE') :
                 'MAPPED REPORT') : 'GENERAL';
             if (signal && signal.kind === 'web') tagNode.classList.add('attention');
             copyNode.textContent = summary;
@@ -1663,11 +1721,12 @@
             });
 
             evidenceNode.textContent = signal
-                ? 'Signal: ' + (title || category) + ' · ' + (signal.item.area || signal.item.sourceName || signal.confidence || 'local source') +
-                    (signal.item.publishedAt ? ' · reported/published ' + String(signal.item.publishedAt) : signal.item.timeText ? ' · ' + signal.item.timeText : ' · publication date unavailable') +
-                    (signal.item.recencyLabel ? ' · ' + signal.item.recencyLabel : '') +
-                    (signal.item.searchWindow ? ' · search: ' + signal.item.searchWindow : '')
-                : 'Basis: current mapped reports and nearby facilities. No confirmed crime alert is available from a nationwide Indonesian open crime feed.';
+                ? 'Signal: ' + (title || category) + ' · Search area: ' + (signal.item.searchArea || signal.item.area || 'approximate area') +
+                    ' · ' + getWebIntelScopeLabel(signal.item) +
+                    (signal.item.publicationDateLabel ? ' · ' + signal.item.publicationDateLabel : signal.item.publishedAt ? ' · article published ' + String(signal.item.publishedAt).slice(0, 10) : ' · publication date unconfirmed') +
+                    ' · ' + (signal.item.eventDateLabel || 'Event date unconfirmed') +
+                    (signal.item.source ? ' · Source: ' + signal.item.source : '')
+                : 'Basis: currently available mapped reports and nearby facilities. No confirmed crime alert is available from a nationwide Indonesian open crime feed.';
 
             servicesNode.innerHTML = '';
             const nearestPolice = getNearestMappedFacility(['police']);
@@ -1688,11 +1747,18 @@
                 }
             });
 
-            if (signal && signal.kind === 'web' && signal.item.ageYears > (30 / 365.2425)) {
-                const historicalNote = document.createElement('p');
-                historicalNote.className = 'text-[10px] text-amber-700 mt-1';
-                historicalNote.textContent = 'This is a historical report, not evidence of a current incident. Use it as local context and check recent official information.';
-                servicesNode.appendChild(historicalNote);
+            if (signal && signal.kind === 'web') {
+                const bucket = getWebIntelTimelineBucket(signal.item);
+                if (bucket === 'undated' || bucket === 'history-30-days-to-2-years' || bucket === 'history-2-to-5-years' || signal.item.eventLocationScope === 'national-context') {
+                    const contextNote = document.createElement('p');
+                    contextNote.className = 'text-[10px] text-amber-700 mt-1';
+                    contextNote.textContent = bucket === 'undated'
+                        ? 'Date unconfirmed: this is not treated as a current alert.'
+                        : bucket !== 'recent-30-days'
+                            ? (signal.item.timelineBasis === 'event-date' ? 'Historical event context, not proof of current danger.' : 'The article is old, but the event date is unconfirmed; do not assume the incident happened on the publication date.')
+                            : 'National or multi-location context; no precise local incident point is established.';
+                    servicesNode.appendChild(contextNote);
+                }
             }
             if (signal && signal.kind === 'web' && signal.item.url) {
                 const linkRow = document.createElement('p');
@@ -1971,12 +2037,16 @@
             currentSelectedIncident = null;
             document.getElementById('detail-title').textContent = article.title || 'Local news signal';
             document.getElementById('detail-desc').textContent = (article.snippet || 'No summary supplied.') +
-                ' This is a search/media signal, not an independently verified incident. No exact coordinates are asserted.';
-            document.getElementById('detail-category').textContent = 'MEDIA SIGNAL · UNVERIFIED';
+                ' This is a search/media lead, not an independently verified incident. No exact coordinates are asserted.';
+            document.getElementById('detail-category').textContent = 'TINYFISH · ' +
+                String(article.category || 'public safety').replace(/_/g, ' ').toUpperCase() + ' · UNVERIFIED';
             setDetailSource(article.source || 'TinyFish Search result', article.url);
-            document.getElementById('detail-distance').innerHTML = '<i class="fa-solid fa-location-arrow mr-1"></i>Local search area: ' + (article.area || 'approximate');
-            document.getElementById('detail-time').innerHTML = '<i class="fa-regular fa-clock mr-1"></i>' + (article.publishedAt ? formatRelativeTime(article.publishedAt) : 'Publication time not verified');
-            document.getElementById('detail-coordinates').innerHTML = '<i class="fa-solid fa-location-dot mr-1"></i>No verified incident coordinates';
+            document.getElementById('detail-distance').textContent = 'Search area: ' + (article.searchArea || article.area || 'approximate') +
+                ' · ' + getWebIntelScopeLabel(article) + '.';
+            document.getElementById('detail-time').textContent = (article.publicationDateLabel || 'Publication date unconfirmed') +
+                ' · ' + (article.eventDateLabel || 'Event date unconfirmed') +
+                ' · ' + (article.timelineLabel || 'Timeline unconfirmed');
+            document.getElementById('detail-coordinates').textContent = article.eventLocationStatus || 'No verified incident coordinates';
             const iconDiv = document.getElementById('detail-icon');
             iconDiv.className = 'detail-icon';
             iconDiv.style.backgroundColor = '#a16207';
@@ -2050,6 +2120,42 @@
             });
         }
 
+        function renderRadarWebSection(container, headingText, articles, tone) {
+            if (!articles.length) return;
+            const heading = document.createElement('div');
+            heading.className = 'pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-wide';
+            heading.style.color = tone;
+            heading.textContent = headingText;
+            container.appendChild(heading);
+            articles.slice(0, 12).forEach(article => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'radar-intel-item';
+                const icon = document.createElement('span');
+                icon.className = 'radar-intel-icon';
+                icon.style.backgroundColor = tone;
+                icon.innerHTML = '<i class="fa-solid ' +
+                    (getWebIntelTimelineBucket(article) === 'undated' ? 'fa-calendar-question'
+                        : ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(article)) ? 'fa-clock-rotate-left' : 'fa-newspaper') +
+                    '"></i>';
+                const textWrap = document.createElement('span');
+                textWrap.className = 'min-w-0 flex-1';
+                const title = document.createElement('span');
+                title.className = 'radar-intel-title block';
+                title.textContent = article.title || 'Local safety signal';
+                const meta = document.createElement('span');
+                meta.className = 'radar-intel-meta block';
+                meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
+                    getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search');
+                textWrap.appendChild(title);
+                textWrap.appendChild(meta);
+                item.appendChild(icon);
+                item.appendChild(textWrap);
+                item.addEventListener('click', () => openWebIntelDetail(article));
+                container.appendChild(item);
+            });
+        }
+
         function renderRadarSidebar(filterType = 'all') {
             activeRadarFilter = filterType;
             const container = document.getElementById('radar-feed-container');
@@ -2066,15 +2172,15 @@
                         : filterType === 'news'
                             ? []
                             : incidents.filter(i => i.type === filterType);
-            const showWebIntel = (filterType === 'all' || filterType === 'news') && webIntel.some(article => !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425));
-            const historicalCount = (filterType === 'all' || filterType === 'news')
-                ? webIntel.filter(article => Number.isFinite(Number(article.ageYears)) && Number(article.ageYears) > (30 / 365.2425) && Number(article.ageYears) <= 5).length
-                : 0;
-            const total = filtered.length + (showWebIntel ? webIntel.filter(article => !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425)).length : 0) + historicalCount;
-            document.getElementById('intel-count').textContent = total + (total === 1 ? ' item' : ' items');
+            const showWeb = filterType === 'all' || filterType === 'news';
+            const recent = showWeb ? webIntel.filter(article => getWebIntelTimelineBucket(article) === 'recent-30-days') : [];
+            const historical = showWeb ? webIntel.filter(article => ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(article))) : [];
+            const undated = showWeb ? webIntel.filter(article => getWebIntelTimelineBucket(article) === 'undated') : [];
+            const webCount = recent.length + historical.length + undated.length;
+            document.getElementById('intel-count').textContent = (filtered.length + webCount) + ((filtered.length + webCount) === 1 ? ' item' : ' items');
 
-            if (!filtered.length && !showWebIntel) {
-                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">No matching reports in the currently available feeds.</div>';
+            if (!filtered.length && !webCount) {
+                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">No matching reports in the currently available feeds. Missing reports are not proof of safety.</div>';
                 return;
             }
 
@@ -2094,7 +2200,8 @@
                 title.textContent = inc.title || 'Incident report';
                 const meta = document.createElement('span');
                 meta.className = 'radar-intel-meta block';
-                meta.textContent = (inc.cachedLocal ? 'CACHED · ' : '') + (inc.timeText || 'Time unavailable') + ' · ' + Number(inc.dist).toFixed(1) + ' km · ' + (inc.sourceName || typeInfo.source);
+                meta.textContent = (inc.cachedLocal ? 'CACHED · ' : '') + (inc.timeText || 'Time unavailable') + ' · ' +
+                    (Number.isFinite(Number(inc.dist)) ? Number(inc.dist).toFixed(1) + ' km · ' : '') + (inc.sourceName || typeInfo.source);
                 textWrap.appendChild(title);
                 textWrap.appendChild(meta);
                 item.appendChild(icon);
@@ -2103,37 +2210,9 @@
                 container.appendChild(item);
             });
 
-            if (showWebIntel) {
-                const separator = document.createElement('div');
-                separator.className = 'pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700';
-                separator.textContent = 'Local web signals · verify before acting';
-                container.appendChild(separator);
-                webIntel.filter(article => !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425)).slice(0, 12).forEach(article => {
-                    const item = document.createElement('button');
-                    item.type = 'button';
-                    item.className = 'radar-intel-item';
-                    const icon = document.createElement('span');
-                    icon.className = 'radar-intel-icon';
-                    icon.style.backgroundColor = '#a16207';
-                    icon.innerHTML = '<i class="fa-solid fa-newspaper"></i>';
-                    const textWrap = document.createElement('span');
-                    textWrap.className = 'min-w-0 flex-1';
-                    const title = document.createElement('span');
-                    title.className = 'radar-intel-title block';
-                    title.textContent = article.title;
-                    const meta = document.createElement('span');
-                    meta.className = 'radar-intel-meta block';
-                    meta.textContent = (article.recencyLabel || article.dateStatus || 'Publication date unconfirmed') + ' · ' +
-                    (article.area || 'municipality/city') + ' · ' + (article.source || 'TinyFish Search') + ' · not independently verified';
-                    textWrap.appendChild(title);
-                    textWrap.appendChild(meta);
-                    item.appendChild(icon);
-                    item.appendChild(textWrap);
-                    item.addEventListener('click', () => openWebIntelDetail(article));
-                    container.appendChild(item);
-                });
-                createHistoricalAwarenessSection(container);
-            }
+            renderRadarWebSection(container, 'Recently dated results · event dates may differ', recent, '#b45309');
+            renderRadarWebSection(container, 'Historical awareness · not live alerts', historical, '#64748b');
+            renderRadarWebSection(container, 'Date unconfirmed · not assumed to be current', undated, '#64748b');
         }
 
         function filterRadarSidebar(type, button) {
@@ -2729,19 +2808,11 @@
             recommendations.classList.toggle('hidden', !showRecommendations);
 
             let filtered = [];
-            if (filterType === 'all') {
-                filtered = incidents;
-            } else if (filterType === 'incidents') {
-                filtered = incidents.filter(item => !['police', 'hospital', 'fire_station'].includes(item.type));
-            } else if (filterType === 'safezone') {
-                filtered = incidents.filter(item => ['police', 'hospital', 'fire_station'].includes(item.type));
-            } else if (filterType === 'earthquake') {
-                filtered = incidents.filter(item => item.type === 'earthquake');
-            } else if (filterType === 'news' || filterType === 'guide') {
-                filtered = [];
-            } else {
-                filtered = incidents.filter(item => item.type === filterType);
-            }
+            if (filterType === 'all') filtered = incidents;
+            else if (filterType === 'incidents') filtered = incidents.filter(item => !['police', 'hospital', 'fire_station'].includes(item.type));
+            else if (filterType === 'safezone') filtered = incidents.filter(item => ['police', 'hospital', 'fire_station'].includes(item.type));
+            else if (filterType === 'earthquake') filtered = incidents.filter(item => item.type === 'earthquake');
+            else if (filterType !== 'news' && filterType !== 'guide') filtered = incidents.filter(item => item.type === filterType);
 
             const showWeb = filterType === 'all' || filterType === 'news';
             const showNoReportsMessage = !filtered.length && !(showWeb && webIntel.length) && filterType !== 'guide';
@@ -2752,9 +2823,7 @@
                 title.className = 'text-sm font-bold text-slate-700';
                 title.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
                     ? 'TinyFish News & OSINT is not connected yet.'
-                    : filterType === 'news'
-                        ? 'No web signals are available right now.'
-                        : 'No matching reports are available in the current feeds.';
+                    : filterType === 'news' ? 'No web signals are available right now.' : 'No matching reports are available in the current feeds.';
                 const note = document.createElement('p');
                 note.className = 'text-xs text-slate-500 mt-2 leading-relaxed';
                 note.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
@@ -2765,42 +2834,47 @@
                 container.appendChild(empty);
             }
             filtered.forEach(item => container.appendChild(createIncidentCard(item)));
-            if (showWeb) {
-                const currentArticles = webIntel.filter(article =>
-                    article.ageYears === null || article.ageYears === undefined ||
-                    !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425));
-                const historicalArticles = webIntel.filter(article =>
-                    article.ageYears !== null && article.ageYears !== undefined &&
-                    Number.isFinite(Number(article.ageYears)) && Number(article.ageYears) > (30 / 365.2425) && Number(article.ageYears) <= 5);
 
-                if (currentArticles.length) {
+            if (showWeb) {
+                const recent = webIntel.filter(article => getWebIntelTimelineBucket(article) === 'recent-30-days');
+                const historical = webIntel.filter(article => ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(article)));
+                const undated = webIntel.filter(article => getWebIntelTimelineBucket(article) === 'undated');
+
+                const addHeading = (text, color) => {
                     const heading = document.createElement('div');
-                    heading.className = 'text-xs font-extrabold uppercase tracking-wide text-amber-700 mt-3';
-                    heading.textContent = 'Recent and undated local news signals · check publication dates';
+                    heading.className = 'text-xs font-extrabold uppercase tracking-wide mt-4';
+                    heading.style.color = color;
+                    heading.textContent = text;
                     container.appendChild(heading);
-                    currentArticles.forEach(article => container.appendChild(createWebIntelCard(article)));
+                };
+                if (recent.length) {
+                    addHeading('Recently dated reports · event dates may differ', '#b45309');
+                    recent.forEach(article => container.appendChild(createWebIntelCard(article, false, false)));
                 }
-                if (historicalArticles.length) {
-                    const heading = document.createElement('div');
-                    heading.className = 'text-xs font-extrabold uppercase tracking-wide text-slate-600 mt-5 border-t border-slate-200 pt-4';
-                    heading.textContent = 'Historical awareness · up to 5 years ago · not live alerts';
-                    container.appendChild(heading);
-                    historicalArticles.forEach(article => container.appendChild(createWebIntelCard(article, true)));
+                if (historical.length) {
+                    addHeading('Historical awareness · date basis shown on each item · not live alerts', '#475569');
+                    historical.forEach(article => container.appendChild(createWebIntelCard(article, true, false)));
+                }
+                if (undated.length) {
+                    addHeading('Date unconfirmed · not assumed to be a current alert', '#64748b');
+                    undated.forEach(article => container.appendChild(createWebIntelCard(article, false, true)));
                 }
             }
         }
 
-        function createWebIntelCard(article, historical = false) {
+        function createWebIntelCard(article, historical = false, undated = false) {
             const div = document.createElement('div');
-            div.className = 'bg-white border ' + (historical ? 'border-slate-200' : 'border-amber-200') + ' rounded-2xl p-4 flex gap-3 shadow-sm cursor-pointer hover:shadow-md';
+            div.className = 'bg-white border ' + (historical ? 'border-slate-200' : undated ? 'border-slate-300' : 'border-amber-200') +
+                ' rounded-2xl p-4 flex gap-3 shadow-sm cursor-pointer hover:shadow-md';
             div.addEventListener('click', () => {
                 switchTab('radar');
                 openWebIntelDetail(article);
             });
             const icon = document.createElement('div');
             icon.className = 'w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0 shadow-sm';
-            icon.style.backgroundColor = '#a16207';
-            icon.innerHTML = '<i class="fa-solid fa-newspaper"></i>';
+            icon.style.backgroundColor = historical || undated ? '#64748b' : '#a16207';
+            icon.innerHTML = '<i class="fa-solid ' + (historical ? 'fa-clock-rotate-left' : undated ? 'fa-calendar-question' : 'fa-newspaper') + '"></i>';
+
             const body = document.createElement('div');
             body.className = 'min-w-0 flex-1';
             const title = document.createElement('h3');
@@ -2810,13 +2884,16 @@
             desc.className = 'text-xs text-slate-600 mt-1.5 leading-relaxed';
             desc.textContent = article.snippet || 'No summary supplied by TinyFish Search.';
             const meta = document.createElement('p');
-            meta.className = 'text-[10px] text-amber-700 font-semibold mt-2';
-            const ageLabel = article.recencyLabel || (Number.isFinite(Number(article.ageYears))
-                ? (Number(article.ageYears).toFixed(1) + ' years ago')
-                : 'Publication date unconfirmed');
-            meta.textContent = (historical ? 'HISTORICAL · ' : '') + ageLabel + ' · ' + (article.area || 'municipality/city') + ' · ' +
-                (article.source || 'TinyFish Search') + ' · unverified media/search signal' +
-                (article.searchWindow ? ' · ' + article.searchWindow : '');
+            meta.className = 'text-[10px] font-semibold mt-2';
+            meta.style.color = historical || undated ? '#64748b' : '#b45309';
+            meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
+                getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search');
+
+            const dateMeta = document.createElement('p');
+            dateMeta.className = 'text-[10px] text-slate-500 mt-1 leading-relaxed';
+            dateMeta.textContent = (article.publicationDateLabel || 'Publication date unconfirmed') + ' · ' +
+                (article.eventDateLabel || 'Event date unconfirmed');
+
             const link = document.createElement('a');
             link.className = 'inline-block mt-2 text-xs font-semibold text-blue-700 hover:underline';
             link.href = article.url;
@@ -2827,6 +2904,7 @@
             body.appendChild(title);
             body.appendChild(desc);
             body.appendChild(meta);
+            body.appendChild(dateMeta);
             body.appendChild(link);
             div.appendChild(icon);
             div.appendChild(body);
