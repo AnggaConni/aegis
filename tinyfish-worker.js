@@ -130,9 +130,10 @@ function assessIncidentLocation(item, localityTerms) {
     const allText = title + ' ' + snippet + ' ' + url;
     const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(allText);
     const genericCrimeOverview = /(crime in indonesia|crime overview|crime rate|murder rate|homicide rate|homicides? per 100,?000|criminality statistics|crime index|crime data by country|jakarta is (?:a )?(?:remarkably )?safe city|indonesia's murder rate)/i.test(title + ' ' + snippet);
-    const specificIncidentSignal = /\b(arrest(?:ed|s)?|detain(?:ed|s)?|occurred|happened|took place|attacked|assaulted|was killed|were killed|died|dead after|fatal clash|bomb blasts?|explosions?|robbed|stole|was raped|was stabbed|tewas|menewaskan|ditangkap|terjadi|dianiaya|dibunuh|dibacok|dirampok|kecelakaan)\b/i.test(title + ' ' + snippet);
+    const genericCrimeCoverage = /(robbers? haunt(?:s|ing)? jakarta|crime wave|crime roundup|crime trends?|criminality overview|crime documentary|crime compilation|crime situation|investigation dipo|anti-crime crackdown|campaign against (?:violent )?crime|police.{0,30}campaign against|new police.{0,25}campaign|recurring street crime)/i.test(title + ' ' + snippet);
+    const specificIncidentSignal = /\b(arrest(?:ed|s)?|detain(?:ed|s)?|occurred|happened|took place|attacked|assaulted|was killed|were killed|died|dead after|fatal clash|bomb blasts?|explosions?|robbed|stole|was raped|was stabbed|was run over|menewaskan|tewas|ditangkap|terjadi|dianiaya|dibunuh|dibacok|dirampok|kecelakaan|named victim|suspect charged|police confirmed the incident)\b/i.test(title + ' ' + snippet);
     const foreignGenericDomain = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
-    if (genericReference || foreignGenericDomain || (genericCrimeOverview && !specificIncidentSignal)) {
+    if (genericReference || foreignGenericDomain || ((genericCrimeOverview || genericCrimeCoverage) && !specificIncidentSignal)) {
         return { accepted: false, reason: 'generic-or-foreign-reference' };
     }
 
@@ -262,7 +263,35 @@ function parseDateValue(value, nowMs) {
     return null;
 }
 
-function extractEventDate(item, title, snippet, nowMs) {
+function resolveWeekdayRelativeToPublication(weekdayName, publicationAnchor) {
+    if (!publicationAnchor || !Number.isFinite(publicationAnchor.dateMs) ||
+        !['absolute-date', 'absolute-timestamp'].includes(publicationAnchor.precision)) return null;
+    const weekdays = {
+        sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+        thursday: 4, friday: 5, saturday: 6
+    };
+    const wanted = weekdays[String(weekdayName || '').toLowerCase()];
+    if (wanted === undefined) return null;
+    const publicationDate = new Date(publicationAnchor.dateMs);
+    const diff = (publicationDate.getUTCDay() - wanted + 7) % 7;
+    // A same-weekday reference is ambiguous: it could mean today or the previous week.
+    if (diff === 0 || diff > 6) return null;
+    const dayMs = Date.UTC(publicationDate.getUTCFullYear(), publicationDate.getUTCMonth(), publicationDate.getUTCDate()) - diff * DAY_MS;
+    return {
+        iso: new Date(dayMs).toISOString(),
+        dateMs: dayMs,
+        precision: 'relative-estimate',
+        raw: String(weekdayName) + ' relative to publication date',
+        relativeLabel: 'weekday estimated from the article publication date'
+    };
+}
+
+function isSeriesStartDateSentence(sentence) {
+    const text = String(sentence || '');
+    return /\b(?:nationwide\s+)?(?:protests?|demonstrations?|waves?\s+of\s+protests?|movements?|campaigns?|nationwide unrest)\b[^.!?]{0,75}\b(?:began|started|commenced|kicked off|dimulai|bermula)\b/i.test(text);
+}
+
+function extractEventDate(item, title, snippet, nowMs, publicationAnchor) {
     const structured = item.eventDate || item.event_date || item.incidentDate || item.incident_date ||
         item.occurredAt || item.occurred_at || item.eventTimestamp || item.incident_timestamp || null;
     if (structured) {
@@ -279,33 +308,76 @@ function extractEventDate(item, title, snippet, nowMs) {
     }
 
     const text = String(title || '') + ' ' + String(snippet || '');
-    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember)';
+    const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
     const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|(?:19|20)\\d{2})';
-    const eventWords = '(?:attacks?|bombings?|blasts?|explosions?|explosive device|murders?|homicides?|fatal assaults?|sexual assaults?|rapes?|robberies|thefts?|shootings?|stabbings?|riots?|unrest|clashes?|protests?|floods?|fires?|accidents?|crashes?|landslides?|earthquakes?|kerusuhan|bentrokan|tawuran|ledakan|pengeboman|pembunuhan|pemerkosaan|penjambretan|pencurian|perampokan|kecelakaan|banjir|kebakaran|tanah longsor|gempa bumi|tewas|meninggal dunia)';
-    const directCue = '(?:occurred|happened|took place|was reported to have occurred|incident occurred|event occurred|attack(?:s)? occurred|clash(?:es)? occurred|terjadi|berlangsung|peristiwa terjadi|insiden terjadi|kejadian(?: terjadi| pada)?)\\s+(?:on|at|in|during|pada(?: tanggal)?|tanggal)?\\s*(' + date + ')';
-    const directMatch = text.match(new RegExp(directCue, 'i'));
-    const eventNearDate = text.match(new RegExp('\\b' + eventWords + '\\b[^.!?]{0,45}\\b(?:on|in|during|pada(?: tanggal)?)\\s+(' + date + ')', 'i'));
-    const match = directMatch || eventNearDate;
-    if (match) {
-        const parsed = parseDateValue(match[1], nowMs);
-        if (parsed) {
-            const approximate = ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(parsed.precision);
-            return {
-                ...parsed,
-                status: parsed.precision === 'year-only-estimate' ? 'event-year-mentioned-in-summary'
-                    : approximate ? 'approximate-event-date-mentioned-in-summary'
-                    : 'event-date-mentioned-in-summary'
-            };
+    const relativeDate = '(?:today|just now|moments ago|yesterday|\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?|d|wk|wks|mo|yr|yrs)\\s+ago)';
+    const weekday = '(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)';
+    const eventWords = '(?:attacks?|bombings?|blasts?|explosions?|explosive device|murders?|homicides?|fatal assaults?|sexual assaults?|rapes?|robberies|thefts?|shootings?|stabbings?|riots?|unrest|clashes?|protests?|floods?|fires?|accidents?|crashes?|landslides?|earthquakes?|kerusuhan|bentrokan|tawuran|ledakan|pengeboman|pembunuhan|pemerkosaan|penjambretan|pencurian|perampokan|kecelakaan|banjir|kebakaran|tanah longsor|tewas|meninggal dunia)';
+    const eventAction = '(?:occurred|happened|took place|was reported|was killed|were killed|killed|died|was run over|were run over|run over|was attacked|were attacked|attacked|was shot|were shot|shot|was stabbed|were stabbed|stabbed|was raped|was robbed|robbed|was assaulted|were assaulted|assaulted|was arrested|were arrested|arrested|terjadi|tewas|meninggal|menewaskan|dibunuh|ditabrak|diserang|ditembak|dibacok)';
+    const directCue = new RegExp('\\b(?:occurred|happened|took place|was reported to have occurred|incident occurred|event occurred|attack(?:s)? occurred|clash(?:es)? occurred|terjadi|berlangsung|peristiwa terjadi|insiden terjadi|kejadian(?: terjadi| pada)?)\\b[^.!?]{0,24}\\b(?:on|at|in|during|pada(?: tanggal)?|tanggal)?\\s*(' + date + ')', 'i');
+    const actionBeforeDate = new RegExp('\\b' + eventAction + '\\b[^.!?]{0,24}\\b(?:on|at|in|during|pada(?: tanggal)?|tanggal)\\s+(' + date + ')', 'i');
+    const dateBeforeAction = new RegExp('\\b(?:on|pada)\\s+(' + date + ')\\s*,?\\s+[^.!?]{0,100}\\b' + eventAction + '\\b', 'i');
+    const eventNearDate = new RegExp('\\b' + eventWords + '\\b[^.!?]{0,45}\\b(?:on|in|during|pada(?: tanggal)?)\\s+(' + date + ')', 'i');
+    const relativeAfterAction = new RegExp('\\b' + eventAction + '\\b[^.!?]{0,35}\\b(' + relativeDate + ')\\b', 'i');
+    const relativeBeforeAction = new RegExp('\\b(' + relativeDate + ')\\b[^.!?]{0,80}\\b' + eventAction + '\\b', 'i');
+    const weekdayBeforeAction = new RegExp('\\b(?:on|last)\\s+(' + weekday + ')\\b[^.!?]{0,100}\\b' + eventAction + '\\b', 'i');
+
+    const sentences = text.split(/(?<=[.!?])\\s+/).filter(Boolean);
+    const nonSeriesText = [];
+    for (const sentence of sentences) {
+        if (isSeriesStartDateSentence(sentence)) continue;
+        nonSeriesText.push(sentence);
+
+        const directMatch = sentence.match(directCue);
+        const actionMatch = sentence.match(actionBeforeDate);
+        const dateLeadMatch = sentence.match(dateBeforeAction);
+        const eventMatch = sentence.match(eventNearDate);
+        const absoluteMatch = directMatch || actionMatch || dateLeadMatch || eventMatch;
+        if (absoluteMatch) {
+            const parsed = parseDateValue(absoluteMatch[1], nowMs);
+            if (parsed) {
+                const approximate = ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(parsed.precision);
+                return {
+                    ...parsed,
+                    status: parsed.precision === 'year-only-estimate' ? 'event-year-mentioned-in-summary'
+                        : approximate ? 'approximate-event-date-mentioned-in-summary'
+                        : 'event-date-mentioned-in-summary'
+                };
+            }
+        }
+
+        const relativeMatch = sentence.match(relativeAfterAction) || sentence.match(relativeBeforeAction);
+        if (relativeMatch) {
+            const parsed = parseDateValue(relativeMatch[1], nowMs);
+            if (parsed) {
+                return {
+                    ...parsed,
+                    status: parsed.precision === 'relative-estimate'
+                        ? 'event-date-relative-wording-in-summary'
+                        : 'event-date-mentioned-in-summary'
+                };
+            }
+        }
+
+        const weekdayMatch = sentence.match(weekdayBeforeAction);
+        if (weekdayMatch) {
+            const anchor = publicationAnchor || parseDateValue(
+                item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null,
+                nowMs
+            );
+            const parsed = resolveWeekdayRelativeToPublication(weekdayMatch[1], anchor);
+            if (parsed) return { ...parsed, status: 'event-weekday-inferred-from-publication-date' };
         }
     }
 
-    // Capture a year only when it is contextually tied to an incident/event term.
-    const yearBeforeEvent = text.match(new RegExp('\\b((?:19|20)\\d{2})\\b[^.!?]{0,35}\\b' + eventWords + '\\b', 'i'));
-    const yearAfterEvent = text.match(new RegExp('\\b' + eventWords + '\\b[^.!?]{0,50}\\b(?:in|during|on|tahun|pada tahun)\\s+((?:19|20)\\d{2})\\b', 'i'));
+    // Year-only estimates remain permitted when the year is tied to a specific event term,
+    // but dates in a protest-series start sentence are deliberately excluded.
+    const filteredText = nonSeriesText.join(' ');
+    const yearBeforeEvent = filteredText.match(new RegExp('\\b((?:19|20)\\d{2})\\b[^.!?]{0,35}\\b' + eventWords + '\\b', 'i'));
+    const yearAfterEvent = filteredText.match(new RegExp('\\b' + eventWords + '\\b[^.!?]{0,50}\\b(?:in|during|on|tahun|pada tahun)\\s+((?:19|20)\\d{2})\\b', 'i'));
     const yearMatch = yearBeforeEvent || yearAfterEvent;
     if (yearMatch) {
-        const year = yearMatch[1];
-        const parsed = parseDateValue(year, nowMs);
+        const parsed = parseDateValue(yearMatch[1], nowMs);
         if (parsed) return { ...parsed, status: 'event-year-mentioned-in-summary' };
     }
     return null;
@@ -479,7 +551,7 @@ function extractCandidateOriginalUrls(text, sourceUrl) {
     return candidates.slice(0, 2);
 }
 
-function extractEventDateFromSourceText(title, snippet, bodyText, nowMs) {
+function extractEventDateFromSourceText(title, snippet, bodyText, nowMs, publicationAnchor) {
     const focus = normalize(String(title || '') + ' ' + String(snippet || ''));
     const fatalFocus = /\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|menewaskan|korban tewas|meninggal|tewas)\b/.test(focus);
     const explosionFocus = /\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(focus);
@@ -498,7 +570,7 @@ function extractEventDateFromSourceText(title, snippet, bodyText, nowMs) {
         if (sexualFocus && !/\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(normalizedSentence)) continue;
         if (theftFocus && !/\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan|stole|stolen|robbed)\b/.test(normalizedSentence)) continue;
         if (accidentFocus && !/\b(road incident|traffic accident|crash|run over|collision|kecelakaan|tabrakan|vehicle)\b/.test(normalizedSentence)) continue;
-        const parsed = extractEventDate({}, title, sentence, nowMs);
+        const parsed = extractEventDate({}, title, sentence, nowMs, publicationAnchor);
         if (parsed) return { ...parsed, status: 'event-date-context-matched-in-original-source' };
     }
     return null;
@@ -521,7 +593,7 @@ function readSourceDateSignals(html, nowMs, title, snippet) {
     const timeTag = (String(html || '').match(/<time\b[^>]*datetime\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/i) || []);
     const timeTagParsed = !publicationParsed && (timeTag[1] || timeTag[2]) ? parseDateValue(timeTag[1] || timeTag[2], nowMs) : null;
     const effectivePublication = publicationParsed || timeTagParsed;
-    const eventParsed = explicitEventParsed || extractEventDateFromSourceText(title, snippet, readableText, nowMs);
+    const eventParsed = explicitEventParsed || extractEventDateFromSourceText(title, snippet, readableText, nowMs, effectivePublication);
 
     return {
         publicationRaw: publicationRaw || null,
@@ -555,7 +627,7 @@ function knownHistoricalIncidentDate(title, snippet, url, nowMs) {
 async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, diagnostics) {
     const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
     let publicationParsed = parseDateValue(publicationRaw, nowMs);
-    let eventParsed = extractEventDate(item, title, snippet, nowMs);
+    let eventParsed = extractEventDate(item, title, snippet, nowMs, publicationParsed);
     let enriched = false;
     let checked = false;
     const knownHistorical = knownHistoricalIncidentDate(title, snippet, item.url || item.link || item.href || '', nowMs);
@@ -753,7 +825,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v8?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v9?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -803,6 +875,7 @@ export default {
                 dateUnconfirmedCount: 0,
                 relativePublicationDateCount: 0,
                 eventDateCount: 0,
+                eventDateUnconfirmedCount: 0,
                 cityMentionCount: 0,
                 nationalContextCount: 0,
                 originalSourceFetchCount: 0,
@@ -984,6 +1057,7 @@ export default {
                 if (item.timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
                 if (item.publicationDatePrecision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
                 if (item.eventDate) diagnostics.eventDateCount += 1;
+                else diagnostics.eventDateUnconfirmedCount += 1;
                 diagnostics.cityMentionCount += 1;
                 if (item.eventLocationScope === 'national-context') diagnostics.nationalContextCount += 1;
             });
@@ -1006,19 +1080,19 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 7,
-                buildVersion: 'timeline-v5.2-context-dates',
+                filterVersion: 8,
+                buildVersion: 'timeline-v5.2.1-context-dates',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
-                recentResults: recentResults.slice(0, 8),
-                mediumTermResults: mediumTermResults.slice(0, 8),
-                longTermResults: longTermResults.slice(0, 8),
-                undatedResults: undatedResults.slice(0, 8),
+                recentResults: recentResults,
+                mediumTermResults: mediumTermResults,
+                longTermResults: longTermResults,
+                undatedResults: undatedResults,
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event and publication dates are kept separate. Dates extracted from article text must match the incident context described by the search result; unrelated dates in a broader timeline are not treated as event dates. A small set of known historical references is date-matched explicitly. Source-page enrichment is best-effort and source text is not independently verified. searchPass/searchWindow identify the query pass only, not the incident or publication date. Statistical/reference pages are filtered separately from specific incident reports. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
+                note: 'Event and publication dates are kept separate. Dates extracted from article text must match the incident context described by the search result; dates that only mark the start of a wider protest series are not treated as individual incident dates. Relative event dates such as yesterday or a number of days ago are approximate; weekday-only dates are inferred only when an absolute publication date provides a clear preceding weekday anchor, and same-weekday ambiguity remains unconfirmed. A small set of known historical references is date-matched explicitly. Source-page enrichment is best-effort and source text is not independently verified. eventDateUnconfirmedCount tracks results without an event date separately from timeline bucket assignment. searchPass/searchWindow identify the query pass only, not the incident or publication date. Statistical/reference pages and general crime roundups are filtered separately from specific incident reports. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 7, buildVersion: 'timeline-v5.2-context-dates', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 8, buildVersion: 'timeline-v5.2.1-context-dates', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
