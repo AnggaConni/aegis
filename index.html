@@ -549,6 +549,7 @@
                             <p class="source-row"><span><span class="radar-source-dot"></span>BMKG · official earthquakes</span><span id="status-bmkg" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>USGS · global earthquakes</span><span id="status-usgs" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>GDACS · global disaster alerts</span><span id="status-gdacs" class="source-state neutral">Waiting</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>NASA EONET · open natural events</span><span id="status-eonet" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>Open-Meteo · forecast at route destination</span><span id="status-weather" class="source-state neutral">On route</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>PetaBencana · community reports</span><span id="status-petabencana" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>OpenStreetMap · facilities</span><span id="status-osm" class="source-state neutral">Waiting</span></p>
@@ -862,7 +863,7 @@
             updateOfflinePlanNote();
             const status = document.getElementById('route-status');
             if (!navigator.onLine) {
-                ['bmkg', 'usgs', 'gdacs', 'petabencana', 'osm', 'crimeapi'].forEach(id => {
+                ['bmkg', 'usgs', 'gdacs', 'eonet', 'petabencana', 'osm', 'crimeapi'].forEach(id => {
                     const node = document.getElementById('status-' + id);
                     if (node && (node.textContent === 'Waiting' || node.dataset.state === 'error')) {
                         updateSourceStatus(id, 'Offline · cached only', 'neutral');
@@ -930,7 +931,7 @@
                 const distance = calculateDistance(existing.lat, existing.lng, incident.lat, incident.lng);
                 const t1 = new Date(existing.timestamp || 0).getTime();
                 const t2 = new Date(incident.timestamp || 0).getTime();
-                return distance < 35 && Math.abs(t1 - t2) < 90 * 60 * 1000;
+                return distance < 15 && Math.abs(t1 - t2) < 10 * 60 * 1000;
             });
             if (duplicate) return false;
             incidents.push(incident);
@@ -1073,6 +1074,7 @@
                 [/USGS/i, 'usgs'],
                 [/PetaBencana/i, 'petabencana'],
                 [/GDACS/i, 'gdacs'],
+                [/NASA EONET/i, 'eonet'],
                 [/OpenStreetMap/i, 'osm']
             ];
             const isSourceUnavailable = item => {
@@ -1096,7 +1098,7 @@
             (snapshot.routeHazardCandidates || []).forEach(item => addCached(item, true));
             snapshot.incidents.forEach(item => addCached(item, false));
             if (!webIntel.length && Array.isArray(snapshot.webIntel)) webIntel = snapshot.webIntel;
-            Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, osm: 1 }).forEach(source => {
+            Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, eonet: 1, osm: 1 }).forEach(source => {
                 const node = document.getElementById('status-' + source);
                 if (node && node.dataset.state === 'error' && !navigator.onLine) {
                     node.textContent = 'Offline · cached reports';
@@ -1107,38 +1109,71 @@
         }
 
         async function fetchRealData(lat, lng) {
+            // Reset live candidates on every refresh. The previous snapshot is restored only
+            // for feeds that fail, preventing stale route hazards from accumulating forever.
             incidents = [];
-            ['bmkg', 'petabencana', 'usgs', 'gdacs', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
+            routeHazardCandidates = [];
+            ['bmkg', 'petabencana', 'usgs', 'gdacs', 'eonet', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
 
             const tasks = [
                 (async () => {
-                    try {
-                        const response = await fetchWithTimeout('https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json');
-                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const endpoints = [
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json', label: 'latest' },
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/gempaterkini.json', label: 'M5+ list' },
+                        { url: 'https://data.bmkg.go.id/DataMKG/TEWS/gempadirasakan.json', label: 'felt list' }
+                    ];
+                    let responding = 0;
+                    let addedNearby = 0;
+                    const results = await Promise.allSettled(endpoints.map(async endpoint => {
+                        const response = await fetchWithTimeout(endpoint.url);
+                        if (!response.ok) throw new Error(endpoint.label + ' HTTP ' + response.status);
                         const payload = await response.json();
-                        const quake = payload && payload.Infogempa && payload.Infogempa.gempa;
-                        if (!quake) throw new Error('Unexpected BMKG response format');
-                        const coords = String(quake.Coordinates || '').split(',').map(Number);
-                        if (coords.length !== 2 || !coords.every(Number.isFinite)) throw new Error('Missing coordinates');
-                        const quakeLat = coords[0], quakeLng = coords[1];
-                        const dist = calculateDistance(lat, lng, quakeLat, quakeLng);
-                        const stamp = quake.DateTime || new Date().toISOString();
-                        const bmkgReport = {
-                            id: 'bmkg_' + String(quake.DateTime || quake.Tanggal || 'latest'),
-                            type: 'earthquake',
-                            title: 'BMKG earthquake · M ' + String(quake.Magnitude || '—'),
-                            desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', quake.Potensi || '', quake.Dirasakan ? 'Felt: ' + quake.Dirasakan : ''].filter(Boolean).join(' | '),
-                            lat: quakeLat, lng: quakeLng, dist: dist,
-                            timestamp: stamp, timeText: formatRelativeTime(stamp),
-                            sourceName: 'BMKG Data Terbuka',
-                            sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
-                            confidenceLabel: 'Official bulletin'
-                        };
-                        routeHazardCandidates.push(bmkgReport);
-                        if (dist <= 50) addIncidentIfUnique(bmkgReport);
-                        updateSourceStatus('bmkg', dist <= 50 ? 'Online · local bulletin' : 'Online · no local quake', 'ok');
-                    } catch (error) {
-                        console.warn('BMKG fetch failed:', error);
+                        const rawRows = payload && payload.Infogempa && payload.Infogempa.gempa;
+                        const rows = Array.isArray(rawRows) ? rawRows : rawRows ? [rawRows] : [];
+                        if (!rows.length) throw new Error(endpoint.label + ' returned no parseable rows');
+                        return { label: endpoint.label, rows };
+                    }));
+                    results.forEach((result, endpointIndex) => {
+                        if (result.status !== 'fulfilled') {
+                            console.warn('BMKG ' + endpoints[endpointIndex].label + ' feed failed:', result.reason);
+                            return;
+                        }
+                        responding += 1;
+                        result.value.rows.forEach((quake, index) => {
+                            const coords = String(quake.Coordinates || '').split(',').map(Number);
+                            if (coords.length !== 2 || !coords.every(Number.isFinite)) return;
+                            const quakeLat = coords[0], quakeLng = coords[1];
+                            const stamp = quake.DateTime || null;
+                            const ageHours = stamp ? (Date.now() - new Date(stamp).getTime()) / 3600000 : NaN;
+                            // The M5+ and felt lists include older entries. Only place recent reports
+                            // into the live hazard/route feeds; older events must not masquerade as active.
+                            if (!Number.isFinite(ageHours) || ageHours < -1 || ageHours > 72) return;
+                            const dist = calculateDistance(lat, lng, quakeLat, quakeLng);
+                            const magnitude = Number(quake.Magnitude);
+                            const feltText = String(quake.Dirasakan || '').trim();
+                            const potentialText = String(quake.Potensi || '').trim();
+                            const feedLabel = result.value.label;
+                            const bmkgReport = {
+                                id: 'bmkg_' + String(quake.DateTime || quake.Coordinates || feedLabel + '_' + index),
+                                type: 'earthquake',
+                                title: 'BMKG earthquake · M ' + (Number.isFinite(magnitude) ? magnitude.toFixed(1) : '—'),
+                                desc: [quake.Wilayah, quake.Kedalaman ? 'Depth: ' + quake.Kedalaman : '', potentialText, feltText ? 'Felt: ' + feltText : ''].filter(Boolean).join(' | '),
+                                lat: quakeLat, lng: quakeLng, dist: dist,
+                                timestamp: stamp, timeText: formatRelativeTime(stamp),
+                                sourceName: 'BMKG Data Terbuka (' + feedLabel + ')',
+                                sourceUrl: 'https://data.bmkg.go.id/gempabumi/',
+                                confidenceLabel: 'Official bulletin',
+                                magnitude: Number.isFinite(magnitude) ? magnitude : null,
+                                felt: !!feltText,
+                                tsunamiPotential: /berpotensi tsunami|tsunami/i.test(potentialText)
+                            };
+                            routeHazardCandidates.push(bmkgReport);
+                            if (dist <= 50 && addIncidentIfUnique(bmkgReport)) addedNearby += 1;
+                        });
+                    });
+                    if (responding) {
+                        updateSourceStatus('bmkg', 'Online · ' + responding + '/3 feeds · ' + addedNearby + ' within 50 km', 'ok');
+                    } else {
                         updateSourceStatus('bmkg', 'Unavailable', 'error');
                     }
                 })(),
@@ -1162,14 +1197,18 @@
                                 timeText: formatRelativeTime(stamp), timestamp: stamp,
                                 sourceName: 'USGS Earthquake Catalog',
                                 sourceUrl: feature.properties.url || 'https://earthquake.usgs.gov/earthquakes/',
-                                confidenceLabel: 'Official seismic catalog'
+                                confidenceLabel: 'Official seismic catalog',
+                                magnitude: Number.isFinite(Number(feature.properties.mag)) ? Number(feature.properties.mag) : null,
+                                feltCount: Number.isFinite(Number(feature.properties.felt)) ? Number(feature.properties.felt) : 0,
+                                mmi: Number.isFinite(Number(feature.properties.mmi)) ? Number(feature.properties.mmi) : null,
+                                tsunamiPotential: Number(feature.properties.tsunami) === 1
                             };
                             routeHazardCandidates.push(quakeReport);
                             if (dist > 50) return;
                             const added = addIncidentIfUnique(quakeReport);
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('usgs', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('usgs', 'Online · ' + nearbyCount + ' within 50 km', 'ok');
                     } catch (error) {
                         console.warn('USGS fetch failed:', error);
                         updateSourceStatus('usgs', 'Unavailable', 'error');
@@ -1202,7 +1241,7 @@
                             const eventLat = Number(geometry.coordinates[1]);
                             if (!Number.isFinite(eventLat) || !Number.isFinite(eventLng)) return;
                             const dist = calculateDistance(lat, lng, eventLat, eventLng);
-                            const stamp = props.fromdate || props.todate || props.fromDate || new Date().toISOString();
+                            const stamp = props.fromdate || props.todate || props.fromDate || null;
                             const eventType = String(props.eventtype || props.eventType || '').toUpperCase();
                             const alertLevel = String(props.alertlevel || props.alertLevel || 'alert').toUpperCase();
                             const eventName = String(props.name || props.title || props.eventname || 'Global disaster event');
@@ -1213,18 +1252,80 @@
                                 title: 'GDACS ' + alertLevel + ' · ' + eventName,
                                 desc: 'Global disaster alert (' + (eventType || 'multi-hazard') + '). This is an alert signal; check the source for affected areas and current status.',
                                 lat: eventLat, lng: eventLng, dist: dist,
-                                timeText: formatRelativeTime(stamp), timestamp: stamp,
+                                timeText: stamp ? formatRelativeTime(stamp) : 'Time unavailable', timestamp: stamp,
                                 sourceName: 'GDACS Global Disaster Alerts',
                                 sourceUrl: eventUrl,
-                                confidenceLabel: 'Global alert · check official situation updates'
+                                confidenceLabel: 'Global alert · check official situation updates',
+                                alertLevel: alertLevel,
+                                eventType: eventType
                             };
                             routeHazardCandidates.push(report);
                             if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount++;
                         });
-                        updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('gdacs', 'Online · ' + nearbyCount + ' within 50 km', 'ok');
                     } catch (error) {
                         console.warn('GDACS fetch failed:', error);
                         updateSourceStatus('gdacs', 'Unavailable', 'error');
+                    }
+                })(),
+                (async () => {
+                    try {
+                        const endpoint = new URL('https://eonet.gsfc.nasa.gov/api/v3/events');
+                        endpoint.searchParams.set('status', 'open');
+                        endpoint.searchParams.set('days', '7');
+                        endpoint.searchParams.set('limit', '200');
+                        const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        const payload = await response.json();
+                        if (!Array.isArray(payload.events)) throw new Error('Unexpected EONET response format');
+                        let nearbyCount = 0;
+                        let eligibleCount = 0;
+                        payload.events.forEach(event => {
+                            const categories = Array.isArray(event.categories) ? event.categories : [];
+                            const categoryText = categories.map(category => String((category && (category.title || category.id)) || '')).join(' ').toLowerCase();
+                            const mappedType = /wildfire|wildfires|fire/.test(categoryText) ? 'fire_event'
+                                : /volcano|volcanic/.test(categoryText) ? 'volcano'
+                                : /severe storm|storm|tropical cyclone/.test(categoryText) ? 'wind'
+                                : /dust|haze/.test(categoryText) ? 'haze'
+                                : /landslide|flood|earthquake|snow/.test(categoryText) ? 'disaster'
+                                : '';
+                            if (!mappedType) return;
+                            const geometries = Array.isArray(event.geometry) ? event.geometry : [];
+                            const latestGeometry = geometries
+                                .filter(item => item && item.type === 'Point' && Array.isArray(item.coordinates) && item.coordinates.length >= 2)
+                                .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())[0];
+                            // EONET also returns polygons; this point-only feed integration deliberately
+                            // skips them rather than plotting a polygon centroid as an exact incident.
+                            if (!latestGeometry) return;
+                            const eventLng = Number(latestGeometry.coordinates[0]);
+                            const eventLat = Number(latestGeometry.coordinates[1]);
+                            if (!Number.isFinite(eventLat) || !Number.isFinite(eventLng) ||
+                                Math.abs(eventLat) > 90 || Math.abs(eventLng) > 180) return;
+                            const stamp = latestGeometry.date || null;
+                            const dist = calculateDistance(lat, lng, eventLat, eventLng);
+                            const eventSources = Array.isArray(event.sources) ? event.sources : [];
+                            const sourceUrl = safeHttpUrl(eventSources[0] && (eventSources[0].url || eventSources[0].source)) ||
+                                safeHttpUrl(event.link) || 'https://eonet.gsfc.nasa.gov/';
+                            const report = {
+                                id: 'eonet_' + String(event.id || event.title || eligibleCount),
+                                type: mappedType,
+                                title: 'NASA EONET · ' + String(event.title || 'Open natural event'),
+                                desc: String(event.description || '') + ' Open event metadata from NASA EONET; point location only. Check linked source for affected-area details.',
+                                lat: eventLat, lng: eventLng, dist: dist,
+                                timestamp: stamp, timeText: stamp ? formatRelativeTime(stamp) : 'Time unavailable',
+                                sourceName: 'NASA EONET · open natural events',
+                                sourceUrl: sourceUrl,
+                                confidenceLabel: 'Global event metadata · inspect source and affected area',
+                                eonetCategory: categoryText
+                            };
+                            eligibleCount += 1;
+                            routeHazardCandidates.push(report);
+                            if (dist <= 50 && addIncidentIfUnique(report)) nearbyCount += 1;
+                        });
+                        updateSourceStatus('eonet', 'Online · ' + nearbyCount + ' within 50 km / ' + eligibleCount + ' point events', 'ok');
+                    } catch (error) {
+                        console.warn('NASA EONET fetch failed:', error);
+                        updateSourceStatus('eonet', 'Unavailable', 'error');
                     }
                 })(),
                 (async () => {
@@ -1282,7 +1383,7 @@
                                 : rawType === 'haze' ? 'haze'
                                 : rawType === 'wind' ? 'wind' : 'disaster';
                             const typeInfo = INCIDENT_TYPES[normalizedType];
-                            const timestamp = props.created_at || props.createdAt || new Date().toISOString();
+                            const timestamp = props.created_at || props.createdAt || null;
                             const rawTitle = String(props.title || '').trim();
                             const title = rawTitle && rawTitle !== ' '
                                 ? rawTitle : (typeInfo ? typeInfo.name : 'Community disaster report');
@@ -1294,7 +1395,7 @@
                                 type: normalizedType, title: title,
                                 desc: description || 'Community-submitted disaster report. Verify independently before acting.',
                                 lat: reportLat, lng: reportLng, dist: dist,
-                                timeText: formatRelativeTime(timestamp), timestamp: timestamp,
+                                timeText: timestamp ? formatRelativeTime(timestamp) : 'Time unavailable', timestamp: timestamp,
                                 sourceName: 'PetaBencana community report', sourceUrl: sourceUrl,
                                 confidenceLabel: 'Community report · verify independently'
                             };
@@ -1303,7 +1404,7 @@
                             const added = addIncidentIfUnique(report);
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('petabencana', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('petabencana', 'Online · ' + nearbyCount + ' within 25 km', 'ok');
                     } catch (error) {
                         console.warn('PetaBencana fetch failed:', error);
                         updateSourceStatus('petabencana', 'Unavailable / format changed', 'error');
@@ -1342,7 +1443,7 @@
                             });
                             if (added) nearbyCount++;
                         });
-                        updateSourceStatus('osm', 'Online · ' + nearbyCount + ' nearby', 'ok');
+                        updateSourceStatus('osm', 'Online · ' + nearbyCount + ' within 10 km', 'ok');
                     } catch (error) {
                         console.warn('Overpass fetch failed:', error);
                         updateSourceStatus('osm', 'Unavailable', 'error');
@@ -1705,10 +1806,34 @@
             }
         }
 
+        function getHazardAgeHours(item) {
+            const stamp = item && item.timestamp ? new Date(item.timestamp).getTime() : NaN;
+            if (!Number.isFinite(stamp)) return null;
+            const ageHours = (Date.now() - stamp) / 3600000;
+            return ageHours >= -1 ? Math.max(0, ageHours) : null;
+        }
+
+        function isFreshHazardSignal(item) {
+            const ageHours = getHazardAgeHours(item);
+            if (ageHours === null) return false;
+            if (item.cachedLocal && item.cacheSnapshotAt) {
+                const cacheAgeHours = (Date.now() - new Date(item.cacheSnapshotAt).getTime()) / 3600000;
+                if (!Number.isFinite(cacheAgeHours) || cacheAgeHours > 24) return false;
+            }
+            const source = String(item.sourceName || '');
+            if (/BMKG/i.test(source)) return ageHours <= 72;
+            if (/USGS/i.test(source)) return ageHours <= 36;
+            if (/PetaBencana/i.test(source)) return ageHours <= 12;
+            if (/GDACS/i.test(source)) return ageHours <= 14 * 24;
+            if (/NASA EONET/i.test(source)) return ageHours <= 7 * 24;
+            return ageHours <= 72;
+        }
+
         function currentNearbyHazards(radiusKm = 10) {
             const hazards = incidents.filter(item =>
                 ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster'].includes(item.type) &&
                 Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
+                isFreshHazardSignal(item) &&
                 calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= radiusKm
             );
             const unique = new Map();
@@ -1719,8 +1844,28 @@
             );
         }
 
+        function currentRegionalHazards(radiusKm = 50) {
+            return currentNearbyHazards(radiusKm).filter(item => {
+                const distance = calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng));
+                if (distance <= 10 || distance > radiusKm) return false;
+                if (item.type === 'earthquake') {
+                    const magnitude = Number(item.magnitude);
+                    return (Number.isFinite(magnitude) && magnitude >= 4.5) ||
+                        item.felt === true || Number(item.feltCount) > 0 ||
+                        item.tsunamiPotential === true ||
+                        (Number.isFinite(Number(item.mmi)) && Number(item.mmi) >= 4);
+                }
+                if (item.type === 'global_disaster') {
+                    return ['RED', 'ORANGE'].includes(String(item.alertLevel || '').toUpperCase());
+                }
+                return /NASA EONET|PetaBencana/i.test(String(item.sourceName || '')) &&
+                    ['flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster'].includes(item.type);
+            });
+        }
+
         function renderAwarenessOverview() {
             const hazards = currentNearbyHazards(10);
+            const regionalHazards = currentRegionalHazards(50);
             const crimeSignals = incidents.filter(item => item.type === 'crime' &&
                 Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
                 calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= 10);
@@ -1753,22 +1898,32 @@
             const topicSummary = newsCategories.slice(0, 2).map(category => topicLabels[category] || category.replace(/_/g, ' '));
             title.textContent = hazards.length
                 ? 'Nearby hazard signals detected'
-                : crimeSignals.length
-                    ? 'Recorded crime data is available nearby'
-                    : topicSummary.length
-                        ? 'News signals can inform prevention'
-                        : 'No nearby mapped hazard signals';
-            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals || newsCategories.length ? ' attention' : '');
+                : regionalHazards.length
+                    ? 'Regional hazard signals detected'
+                    : crimeSignals.length
+                        ? 'Recorded crime data is available nearby'
+                        : topicSummary.length
+                            ? 'News signals can inform prevention'
+                            : 'No nearby mapped hazard signals';
+            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals || regionalHazards.length || newsCategories.length ? ' attention' : '');
             pill.innerHTML = totalSignals
-                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' mapped signal' : ' mapped signals')
-                : webIntel.length
-                    ? '<i class="fa-solid fa-newspaper"></i> ' + webIntel.length + ' web signals'
-                    : '<i class="fa-solid fa-eye"></i> Monitoring';
+                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' nearby signal' : ' nearby signals')
+                : regionalHazards.length
+                    ? '<i class="fa-solid fa-earth-americas"></i> ' + regionalHazards.length + ' regional'
+                    : webIntel.length
+                        ? '<i class="fa-solid fa-newspaper"></i> ' + webIntel.length + ' web signals'
+                        : '<i class="fa-solid fa-eye"></i> Monitoring';
             if (hazards.length) {
                 const nearest = hazards[0];
                 const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
-                copy.textContent = 'The available feeds contain ' + hazards.length + ' mapped hazard signal(s) within 10 km. Nearest: ' +
+                copy.textContent = hazards.length + ' recent mapped hazard signal(s) are within 10 km. Nearest: ' +
                     (nearest.title || nearest.type) + ' (' + nearestKm.toFixed(1) + ' km). Check its timestamp and original source before acting.';
+            } else if (regionalHazards.length) {
+                const nearest = regionalHazards[0];
+                const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
+                copy.textContent = 'No qualifying mapped signal was found within 10 km, but ' + regionalHazards.length +
+                    ' recent regional hazard signal(s) were found within 50 km. Nearest: ' + (nearest.title || nearest.type) +
+                    ' (' + nearestKm.toFixed(1) + ' km). This is regional context, not a prediction of local impact; check the original source and official advisories.';
             } else if (crimeSignals.length) {
                 copy.textContent = crimeSignals.length + ' historical police-recorded crime item(s) were returned near this point. Locations are approximate and records are not live alerts; review the categories and reporting month below.';
             } else if (newsCategories.length) {
@@ -1778,13 +1933,14 @@
             } else if (webIntel.length) {
                 copy.textContent = webIntel.length + ' web result(s) are available for review. Search results may inform awareness, but are not verified incident records.';
             } else {
-                copy.textContent = 'No mapped hazard signals were found within 10 km in the currently available feeds. Coverage can be incomplete or delayed; this is not a safety guarantee.';
+                copy.textContent = 'No recent mapped hazard signals were found within 10 km in the feeds currently available. Coverage can be incomplete or delayed; this is not a safety guarantee.';
             }
-            const onlineSources = ['bmkg','usgs','gdacs','petabencana','osm'].filter(id => {
+            const onlineSources = ['bmkg','usgs','gdacs','eonet','petabencana','osm'].filter(id => {
                 const node = document.getElementById('status-' + id);
                 return node && node.dataset.state === 'ok';
             }).length;
-            count.textContent = onlineSources + '/5 incident and facility sources responding · ' + webIntel.length + ' web signals';
+            count.textContent = onlineSources + '/6 data feeds responding · ' + hazards.length + ' within 10 km · ' +
+                regionalHazards.length + ' regional · ' + webIntel.length + ' web signals';
 
             const tripNote = document.getElementById('awareness-trip-note');
             const tripCopy = document.getElementById('awareness-trip-copy');
@@ -1850,6 +2006,15 @@
                     : priorityHazard.type === 'flood' ? 'flood'
                     : classifySafetyText(priorityHazard.title + ' ' + priorityHazard.desc);
                 return { category: category, item: priorityHazard, kind: 'mapped', confidence: 'Mapped hazard report' };
+            }
+
+            const regionalHazard = currentRegionalHazards(50)[0];
+            if (regionalHazard) {
+                const category = regionalHazard.type === 'earthquake' ? 'earthquake'
+                    : regionalHazard.type === 'flood' ? 'flood'
+                    : regionalHazard.type === 'fire_event' ? 'fire'
+                    : classifySafetyText(regionalHazard.title + ' ' + regionalHazard.desc);
+                return { category: category, item: regionalHazard, kind: 'regional', confidence: 'Recent regional hazard context' };
             }
 
             const localWebSignals = webIntel.filter(article =>
@@ -1986,7 +2151,9 @@
                     ? getWebSignalRecommendationContext(signal.item)
                     : signal.kind === 'crimeApi'
                         ? 'Police open data contains a recorded crime near this point. UK street-level locations are approximate and the records are historical, not real-time alerts.'
-                        : 'A mapped crime-related report is available. Check the source, timestamp, and precise area before acting.';
+                        : signal.kind === 'regional'
+                            ? 'A recent regional hazard signal is within 50 km. Distance and event magnitude do not predict impact at your exact location; check the linked source and current official advisories.'
+                            : 'A mapped hazard report is available. Check the source, timestamp, and precise area before acting.';
                 if (category === 'gender_based_violence') {
                     tips.push('Use risk studies to inform prevention and access to support; they do not show that every person or place in the area poses a threat.');
                     tips.push('When useful for your situation, choose routes and staffed public places where you feel safe, and share travel plans with a trusted contact.');
@@ -2076,6 +2243,7 @@
             titleNode.textContent = heading;
             tagNode.className = 'personalized-label';
             tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' :
+                signal.kind === 'regional' ? 'REGIONAL CONTEXT' :
                 signal.kind === 'web' ? (signal.item.evidenceType === 'structural-risk' || getWebIntelTimelineBucket(signal.item) === 'risk-context' ? 'RISK CONTEXT' :
                     getWebIntelTimelineBucket(signal.item) === 'undated' ? 'DATE UNCONFIRMED' :
                     getWebIntelTimelineBucket(signal.item).startsWith('history') ? 'HISTORICAL CONTEXT' :
@@ -2410,6 +2578,7 @@
             if (!container) return;
             container.innerHTML = '';
             const hazards = currentNearbyHazards(10);
+            const regionalHazards = currentRegionalHazards(50);
 
             if (hazards.length) {
                 const types = new Set(hazards.map(item => item.type));
@@ -2451,6 +2620,35 @@
                 );
                 alertCard.classList.add('border-amber-200');
                 container.appendChild(alertCard);
+            }
+
+            if (regionalHazards.length) {
+                const regional = regionalHazards[0];
+                const distanceKm = calculateDistance(userLocation.lat, userLocation.lng, Number(regional.lat), Number(regional.lng));
+                const title = regional.type === 'earthquake' ? 'Regional earthquake signal'
+                    : regional.type === 'flood' ? 'Regional flood-report context'
+                    : regional.type === 'fire_event' ? 'Regional fire or wildfire context'
+                    : 'Regional hazard context';
+                const magnitudeText = Number.isFinite(Number(regional.magnitude)) ? ' Magnitude: M ' + Number(regional.magnitude).toFixed(1) + '.' : '';
+                const card = createRecommendationCard(
+                    'fa-earth-americas',
+                    title,
+                    regionalHazards.length + ' recent regional signal(s) are between 10 and 50 km away. Nearest: ' +
+                        (regional.title || regional.type) + ' (' + distanceKm.toFixed(1) + ' km).' + magnitudeText +
+                        ' This is regional context, not a prediction of impact at your exact location.',
+                    [
+                        'Check the original source, event time, and current local authority advisories before changing plans.',
+                        'For earthquakes, magnitude and epicentral distance alone do not predict the shaking at your location; consider official felt reports and local instructions.',
+                        'Keep ordinary preparedness steps in place. Do not treat a regional signal as proof that evacuation is required.'
+                    ],
+                    'Review regional event on map',
+                    () => {
+                        switchTab('radar');
+                        openIncidentSheet(regional);
+                    }
+                );
+                card.classList.add('border-slate-200');
+                container.appendChild(card);
             }
 
             if (webIntel.length) {
@@ -3084,7 +3282,7 @@
             const padLng = radius / (111320 * Math.max(0.05, Math.cos(midLat * Math.PI / 180)));
             const candidates = new Map();
             routeHazardCandidates.concat(incidents.filter(isHazardForRouting)).forEach(inc => {
-                if (inc && isHazardForRouting(inc) && inc.id) candidates.set(String(inc.id), inc);
+                if (inc && isHazardForRouting(inc) && isFreshHazardSignal(inc) && inc.id) candidates.set(String(inc.id), inc);
             });
 
             const rows = Array.from(candidates.values())
@@ -3102,8 +3300,8 @@
                     const duplicate = deduplicated.some(existing => {
                         if (existing.incident.type !== 'earthquake') return false;
                         const otherStamp = new Date(existing.incident.timestamp || 0).getTime();
-                        return calculateDistance(existing.incident.lat, existing.incident.lng, inc.lat, inc.lng) < 35 &&
-                            Math.abs(stamp - otherStamp) < 90 * 60 * 1000;
+                        return calculateDistance(existing.incident.lat, existing.incident.lng, inc.lat, inc.lng) < 15 &&
+                            Math.abs(stamp - otherStamp) < 10 * 60 * 1000;
                     });
                     if (duplicate) return;
                 }

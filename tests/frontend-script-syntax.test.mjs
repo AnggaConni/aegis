@@ -156,3 +156,34 @@ test('mobile overview actions row and refreshed GPS status remain compact', () =
   assert.match(html, /#gps-status span:last-child \{ font-size:9px !important; \}/);
   assert.match(html, /id="awareness-actions-row"/);
 });
+
+
+test('hazard overview separates current local signals from regional context and expires stale data', () => {
+  assert.match(html, /routeHazardCandidates = \[\]/);
+  assert.match(html, /gempaterkini\.json/);
+  assert.match(html, /gempadirasakan\.json/);
+  assert.match(html, /function isFreshHazardSignal\(item\)/);
+  assert.match(html, /function currentRegionalHazards\(radiusKm = 50\)/);
+  assert.match(html, /No qualifying mapped signal was found within 10 km/);
+  assert.match(html, /recent regional signal\(s\) are between 10 and 50 km away/);
+  assert.match(html, /6 data feeds responding/);
+  assert.match(html, /within 50 km/);
+  assert.match(html, /within 25 km/);
+  assert.match(html, /within 10 km/);
+  assert.match(html, /isFreshHazardSignal\(inc\)/);
+});
+
+test('NASA EONET is a separate global natural-event source and never plots polygons as exact points', () => {
+  assert.match(html, /https:\/\/eonet\.gsfc\.nasa\.gov\/api\/v3\/events/);
+  assert.match(html, /id="status-eonet"/);
+  assert.match(html, /NASA EONET · open natural events/);
+  assert.match(html, /item\.type === 'Point' && Array\.isArray\(item\.coordinates\)/);
+  assert.match(html, /skips them rather than plotting a polygon centroid as an exact incident/);
+});
+
+test('BMKG feed expansion only elevates recent timestamped earthquakes', () => {
+  assert.match(html, /const ageHours = stamp \? \(Date\.now\(\) - new Date\(stamp\)\.getTime\(\)\) \/ 3600000 : NaN/);
+  assert.match(html, /ageHours > 72/);
+  assert.match(html, /magnitude >= 4\.5/);
+  assert.match(html, /tsunamiPotential/);
+});
