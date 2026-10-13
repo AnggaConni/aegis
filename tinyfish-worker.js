@@ -329,21 +329,26 @@ function decodeHtmlEntities(value) {
 }
 
 function extractAttribute(tag, name) {
-    // Attribute names used here are fixed HTML names, not user-controlled input.
-    const match = tag.match(new RegExp('(?:^|\\\\s)' + name + '\\\\s*=\\\\s*(?:"([^"]*)"|\\x27([^\\x27]*)\\x27|([^\\\\s>]+))', 'i'));
-    return match ? decodeHtmlEntities(match[1] || match[2] || match[3] || '').trim() : '';
+    const pattern = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+    let match;
+    while ((match = pattern.exec(tag)) !== null) {
+        if (match[1].toLowerCase() === name.toLowerCase()) {
+            return decodeHtmlEntities(match[2] || match[3] || match[4] || '').trim();
+        }
+    }
+    return '';
 }
 
 function isSafePublicHttpUrl(rawUrl) {
     let url;
     try { url = new URL(rawUrl); } catch (_) { return false; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
-    const host = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, '').replace(/\\.$/, '');
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
     if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') ||
         host.endsWith('.internal') || host.endsWith('.test') || host.endsWith('.invalid')) return false;
 
     const octets = host.split('.');
-    if (octets.length === 4 && octets.every(part => /^\\d{1,3}$/.test(part) && Number(part) <= 255)) {
+    if (octets.length === 4 && octets.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
         const [a, b] = octets.map(Number);
         if (a === 0 || a === 10 || a === 127 || a >= 224 ||
             (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
@@ -357,17 +362,17 @@ function isSafePublicHttpUrl(rawUrl) {
 
 function htmlToReadableText(html) {
     return decodeHtmlEntities(String(html || '')
-        .replace(/<(script|style|noscript|svg|iframe|template)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi, ' ')
-        .replace(/<!--[\\s\\S]*?-->/g, ' ')
+        .replace(/<(script|style|noscript|svg|iframe|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+        .replace(/<!--[\s\S]*?-->/g, ' ')
         .replace(/<[^>]+>/g, ' '))
-        .replace(/\\s+/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 120000);
 }
 
 function extractMetaValue(html, wantedNames) {
     const wanted = new Set(wantedNames.map(value => value.toLowerCase()));
-    const tags = String(html || '').match(/<meta\\b[^>]*>/gi) || [];
+    const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
     for (const tag of tags) {
         const key = (extractAttribute(tag, 'property') || extractAttribute(tag, 'name') ||
             extractAttribute(tag, 'itemprop') || extractAttribute(tag, 'http-equiv')).toLowerCase();
@@ -380,7 +385,7 @@ function extractMetaValue(html, wantedNames) {
 }
 
 function collectJsonLdSignals(html) {
-    const scripts = String(html || '').match(/<script\\b[^>]*type\\s*=\\s*["']application\\/ld\\+json["'][^>]*>[\\s\\S]*?<\\/script\\s*>/gi) || [];
+    const scripts = String(html || '').match(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script\s*>/gi) || [];
     const objects = [];
     for (const script of scripts) {
         const start = script.indexOf('>');
@@ -409,7 +414,7 @@ function collectJsonLdSignals(html) {
         const types = (Array.isArray(object['@type']) ? object['@type'] : [object['@type']])
             .filter(Boolean).map(value => String(value).toLowerCase());
         if (!publicationRaw) publicationRaw = object.datePublished || object.dateCreated || object.uploadDate || '';
-        if (!eventRaw && types.some(type => /(^|\\/)(event|crimeevent|socialevent|publicevent)$/.test(type))) {
+        if (!eventRaw && types.some(type => /(^|\/)(event|crimeevent|socialevent|publicevent)$/.test(type))) {
             eventRaw = object.startDate || object.endDate || '';
         }
     }
@@ -444,7 +449,7 @@ async function fetchPublicHtml(rawUrl) {
         if (!response.ok) return null;
         const contentType = response.headers.get('Content-Type') || '';
         const length = Number(response.headers.get('Content-Length') || 0);
-        if (length > 1500000 || (contentType && !/(text\\/html|application\\/xhtml\\+xml)/i.test(contentType))) return null;
+        if (length > 1500000 || (contentType && !/(text\/html|application\/xhtml\+xml)/i.test(contentType))) return null;
         let html = '';
         try { html = await response.text(); } catch (_) { return null; }
         if (!html || html.length > 1800000) return null;
@@ -456,14 +461,14 @@ async function fetchPublicHtml(rawUrl) {
 function extractCandidateOriginalUrls(text, sourceUrl) {
     const candidates = [];
     const sourceHost = (() => {
-        try { return new URL(sourceUrl).hostname.toLowerCase().replace(/^www\\./, ''); } catch (_) { return ''; }
+        try { return new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return ''; }
     })();
-    const urls = String(text || '').match(/https?:\\/\\/[^\\s<>"')\\]]+/gi) || [];
+    const urls = String(text || '').match(/https?:\/\/[^\s<>"')\]]+/gi) || [];
     urls.forEach(raw => {
         const cleaned = raw.replace(/[.,;:!?]+$/g, '');
         if (!isSafePublicHttpUrl(cleaned)) return;
         let host = '';
-        try { host = new URL(cleaned).hostname.toLowerCase().replace(/^www\\./, ''); } catch (_) { return; }
+        try { host = new URL(cleaned).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return; }
         if (host === sourceHost) return;
         if (!candidates.includes(cleaned)) candidates.push(cleaned);
     });
@@ -506,8 +511,8 @@ async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, di
     const originalUrls = extractCandidateOriginalUrls(snippet, item.url || item.link || item.href || '');
     let candidates = [item.url || item.link || item.href || '', ...originalUrls].filter(Boolean);
     try {
-        const sourceHost = new URL(candidates[0]).hostname.toLowerCase().replace(/^www\\./, '');
-        if (/(facebook\\.com|instagram\\.com|youtube\\.com|youtu\\.be|tiktok\\.com)$/.test(sourceHost) && originalUrls.length) {
+        const sourceHost = new URL(candidates[0]).hostname.toLowerCase().replace(/^www\./, '');
+        if (/(facebook\.com|instagram\.com|youtube\.com|youtu\.be|tiktok\.com)$/.test(sourceHost) && originalUrls.length) {
             candidates = [...originalUrls, candidates[0]];
         }
     } catch (_) {}
@@ -554,15 +559,15 @@ async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, di
 
 function classifyIncident(title, snippet) {
     const text = normalize(String(title || '') + ' ' + String(snippet || ''));
-    const hasExplosion = /\\b(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)\\b/.test(text);
-    const hasSexualViolence = /\\b(rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan)\\b/.test(text);
-    const hasUnrest = /\\b(riot|unrest|mob violence|clash|clashes|communal violence|protest|protests|demonstration|demonstrations|tawuran|bentrokan|bentrok|ricuh|kerusuhan|unjuk rasa|demonstrasi)\\b/.test(text);
-    const hasFatality = /\\b(murder|homicide|killed|dead after|people dead|fatal|deadly|died after|victim died|death toll|people were killed|run over|struck and killed|pembunuhan|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal)\\b/.test(text);
-    const hasFatalAssault = /\\b(fatal assault|fatal attack|fatal stabbing|fatal shooting|deadly assault|died after (?:an? )?assault|assault incident.*(?:died|fatal|death)|serangan fatal|meninggal setelah dianiaya)\\b/.test(text);
-    const hasTheft = /\\b(pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)\\b/.test(text);
-    const hasFraud = /\\b(scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online)\\b/.test(text);
-    const hasAccident = /\\b(accident|crash|collision|hit and run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun)\\b/.test(text);
-    const hasDisaster = /\\b(flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran)\\b/.test(text);
+    const hasExplosion = /\b(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)\b/.test(text);
+    const hasSexualViolence = /\b(rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan)\b/.test(text);
+    const hasUnrest = /\b(riot|unrest|mob violence|clash|clashes|communal violence|protest|protests|demonstration|demonstrations|tawuran|bentrokan|bentrok|ricuh|kerusuhan|unjuk rasa|demonstrasi)\b/.test(text);
+    const hasFatality = /\b(murder|homicide|killed|dead after|people dead|fatal|deadly|died after|victim died|death toll|people were killed|run over|struck and killed|pembunuhan|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal)\b/.test(text);
+    const hasFatalAssault = /\b(fatal assault|fatal attack|fatal stabbing|fatal shooting|deadly assault|died after (?:an? )?assault|assault incident.*(?:died|fatal|death)|serangan fatal|meninggal setelah dianiaya)\b/.test(text);
+    const hasTheft = /\b(pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)\b/.test(text);
+    const hasFraud = /\b(scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online)\b/.test(text);
+    const hasAccident = /\b(accident|crash|collision|hit and run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun)\b/.test(text);
+    const hasDisaster = /\b(flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran)\b/.test(text);
 
     let category = 'public_safety';
     if (hasExplosion) category = 'explosion_or_blast';
