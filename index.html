@@ -1768,8 +1768,9 @@
             if (/(fire|building blaze|burning building|smoke plume|kebakaran)/.test(text)) return 'fire';
             if (/(earthquake|aftershock|seismic|gempa bumi|gunung meletus|tanah longsor)/.test(text)) return 'earthquake';
             if (/(carding|card skimm|atm skimm|credit.card fraud|debit.card fraud|payment fraud|banking fraud|phishing|financial scam|online scam|penipuan|skimming|investasi bodong)/.test(text)) return 'fraud';
-            if (/(gender[- ]based violence|violence against women|violence against girls|intimate partner violence|domestic violence|kekerasan berbasis gender|kekerasan terhadap perempuan|kekerasan dalam rumah tangga)/.test(text)) return 'gender_based_violence';
+            // Classify specific sexual-violence reports before the broader GBV category.
             if (/(pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan|rape|sexual assault|sexual violence|sexual harassment)/.test(text)) return 'sexual_violence';
+            if (/(gender[- ]based violence|violence against women|violence against girls|intimate partner violence|domestic violence|kekerasan berbasis gender|kekerasan terhadap perempuan|kekerasan dalam rumah tangga)/.test(text)) return 'gender_based_violence';
             if (/(murder|homicide|pembunuhan|korban tewas|meninggal dunia|tewas dalam|fatal stabbing|fatal shooting)/.test(text)) return 'homicide';
             if (/(riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh)/.test(text)) return 'unrest';
             if (/(pickpocket|pick pocket|snatch theft|phone snatching|bag snatching|mugging|robbery|robbed|theft|stolen phone|stolen wallet|burglary|shoplifting|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)/.test(text)) return 'theft';
