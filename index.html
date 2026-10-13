@@ -95,6 +95,9 @@
         .marker-wind { background-color:#0891b2; }
         .marker-disaster { background-color:#b45309; }
         .marker-global-disaster { background-color:#be123c; }
+        .marker-crime { background-color:#7c3aed; }
+        .personalized-recommendation { background:#fff; border:1px solid #cbd5e1; border-radius:12px; padding:11px; margin:0 0 10px; }
+        .personalized-label { display:inline-flex; align-items:center; border-radius:999px; padding:4px 7px; background:#fff7ed; color:#9a3412; font-size:9px; font-weight:800; }
         .route-planner { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin:0 0 10px; }
         .safety-mode-switch { display:flex; gap:6px; padding:4px; border:1px solid #e2e8f0; background:#f8fafc; border-radius:10px; margin-bottom:9px; }
         .safety-mode-btn { flex:1; border:1px solid transparent; border-radius:7px; background:transparent; color:#64748b; padding:8px 5px; font-size:10px; font-weight:800; }
@@ -274,6 +277,21 @@
                             </div>
                         </section>
 
+                        <section id="personalized-recommendation" class="personalized-recommendation" aria-live="polite" aria-label="Personalized local safety recommendation">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="recommendation-icon"><i class="fa-solid fa-shield-heart"></i></span>
+                                <div class="min-w-0 flex-1">
+                                    <p class="text-[10px] uppercase tracking-wide font-extrabold text-slate-500">Recommended for your area</p>
+                                    <h3 id="personal-rec-title" class="text-xs font-extrabold text-slate-900 mt-0.5">Preparing local safety guidance…</h3>
+                                </div>
+                                <span id="personal-rec-tag" class="personalized-label">GENERAL</span>
+                            </div>
+                            <p id="personal-rec-copy" class="text-[10px] text-slate-600 leading-relaxed">Recommendations will use nearby mapped services and locally relevant reports when available.</p>
+                            <ul id="personal-rec-tips" class="text-[10px] text-slate-600 leading-relaxed mt-2 pl-4 list-disc space-y-1"></ul>
+                            <div id="personal-rec-evidence" class="text-[9px] text-slate-500 mt-2"></div>
+                            <div id="personal-rec-services" class="mt-2 space-y-1"></div>
+                        </section>
+
                         <section id="route-planner-card" class="route-planner hidden" aria-label="Route planner">
                             <div class="flex items-center justify-between gap-2 mb-2">
                                 <p class="text-[11px] font-extrabold text-slate-900"><i class="fa-solid fa-route text-blue-600 mr-1"></i> Route Planner</p>
@@ -336,6 +354,7 @@
                             <p class="source-row"><span><span class="radar-source-dot"></span>Open-Meteo · forecast at route destination</span><span id="status-weather" class="source-state neutral">On route</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>PetaBencana · community reports</span><span id="status-petabencana" class="source-state neutral">Waiting</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>OpenStreetMap · facilities</span><span id="status-osm" class="source-state neutral">Waiting</span></p>
+                            <p class="source-row"><span><span class="radar-source-dot"></span>Police API · recorded crime (UK only)</span><span id="status-crimeapi" class="source-state neutral">Coverage-limited</span></p>
                             <p class="source-row"><span><span class="radar-source-dot"></span>TinyFish · local news search</span><span id="status-tinyfish" class="source-state neutral">Optional</span></p>
                             <p class="mt-2">Coverage varies by source. Community and media reports are not independently verified. This tool is informational and is not an emergency dispatch service.</p>
                         </div>
@@ -443,6 +462,7 @@
             wind: { color: 'marker-wind', hex: '#0891b2', icon: 'fa-wind', name: 'Wind report', source: 'PetaBencana' },
             disaster: { color: 'marker-disaster', hex: '#b45309', icon: 'fa-triangle-exclamation', name: 'Disaster report', source: 'PetaBencana' },
             global_disaster: { color: 'marker-global-disaster', hex: '#be123c', icon: 'fa-earth-americas', name: 'Global disaster alert', source: 'GDACS' },
+            crime: { color: 'marker-crime', hex: '#7c3aed', icon: 'fa-user-shield', name: 'Recorded crime', source: 'Police API (UK)' },
             news: { color: 'marker-news', hex: '#eab308', icon: 'fa-newspaper', name: 'Legacy news signal', source: 'Previous saved report' },
             police: { color: 'marker-police', hex: '#3b82f6', icon: 'fa-building-shield', name: 'Police Station', source: 'OpenStreetMap' },
             hospital: { color: 'marker-hospital', hex: '#ef4444', icon: 'fa-truck-medical', name: 'Hospital', source: 'OpenStreetMap' },
