@@ -261,7 +261,7 @@
                 <button onclick="filterFeed('all', this)" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">All</button>
                 <button onclick="filterFeed('earthquake', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Earthquakes</button>
                 <button onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Safe Zones</button>
-                <button onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Intel Feed</button>
+                <button onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">News &amp; OSINT</button>
             </div>
 
             <div id="feed-container" class="flex flex-col gap-3"></div>
@@ -879,13 +879,59 @@
                 ? incidents
                 : filterType === 'safezone'
                     ? incidents.filter(i => ['police', 'hospital', 'fire_station'].includes(i.type))
-                    : incidents.filter(i => i.type === filterType);
+                    : filterType === 'news'
+                        ? []
+                        : filterType === 'earthquake'
+                            ? incidents.filter(i => i.type === 'earthquake')
+                            : incidents.filter(i => i.type === filterType);
+            const showWeb = filterType === 'all' || filterType === 'news';
 
-            if (!filtered.length) {
-                container.innerHTML = '<p class="text-slate-500 text-center text-sm py-8 font-medium">No live intelligence data for this category in your radius.</p>';
+            if (!filtered.length && !(showWeb && webIntel.length)) {
+                container.innerHTML = '<p class="text-slate-500 text-center text-sm py-8 font-medium">No matching reports in the currently available feeds.</p>';
                 return;
             }
             filtered.forEach(inc => container.appendChild(createIncidentCard(inc)));
+            if (showWeb) {
+                webIntel.forEach(article => container.appendChild(createWebIntelCard(article)));
+            }
+        }
+
+        function createWebIntelCard(article) {
+            const div = document.createElement('div');
+            div.className = 'bg-white border border-amber-200 rounded-2xl p-4 flex gap-3 shadow-sm cursor-pointer hover:shadow-md';
+            div.addEventListener('click', () => {
+                switchTab('radar');
+                openWebIntelDetail(article);
+            });
+            const icon = document.createElement('div');
+            icon.className = 'w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0 shadow-sm';
+            icon.style.backgroundColor = '#a16207';
+            icon.innerHTML = '<i class="fa-solid fa-newspaper"></i>';
+            const body = document.createElement('div');
+            body.className = 'min-w-0 flex-1';
+            const title = document.createElement('h3');
+            title.className = 'font-bold text-sm leading-tight text-slate-800';
+            title.textContent = article.title || 'Local web signal';
+            const desc = document.createElement('p');
+            desc.className = 'text-xs text-slate-600 mt-1.5 leading-relaxed';
+            desc.textContent = article.snippet || 'No summary supplied by TinyFish Search.';
+            const meta = document.createElement('p');
+            meta.className = 'text-[10px] text-amber-700 font-semibold mt-2';
+            meta.textContent = (article.source || 'TinyFish Search') + ' · unverified media/search signal';
+            const link = document.createElement('a');
+            link.className = 'inline-block mt-2 text-xs font-semibold text-blue-700 hover:underline';
+            link.href = article.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = 'Open source ↗';
+            link.addEventListener('click', event => event.stopPropagation());
+            body.appendChild(title);
+            body.appendChild(desc);
+            body.appendChild(meta);
+            body.appendChild(link);
+            div.appendChild(icon);
+            div.appendChild(body);
+            return div;
         }
 
         function renderSaved() {
