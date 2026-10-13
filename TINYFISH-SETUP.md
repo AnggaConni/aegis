@@ -17,15 +17,19 @@ The five-year range is a search horizon, **not a guarantee of comprehensive cove
 
 The Worker applies a municipality-name relevance check to the title and snippet; a city name that appears only in a URL is not sufficient. It distinguishes `city-mentioned-location-unverified`, `city-mentioned-context-unclear`, and `national-context`. These are scope hints, not verified incident coordinates. Diagnostics report duplicate items, missing source URLs, generic/foreign references rejected, out-of-window items rejected, undated items, and failed search windows. Reports containing explosions/blasts and fatality terms are categorized explicitly. When publication and event dates are absent, they stay undated; headline wording such as "BREAKING" is not treated as a reliable timestamp. Hashtag locations and city-headline formats can establish a city mention, but do not establish an exact incident point.
 
-## Timeline enrichment and verification (Worker v5.1)
+## Timeline enrichment and verification (Worker v5.2)
 
-The Worker identifies its deployed logic in the response with `filterVersion: 6` and `buildVersion: "timeline-v5.1-source-dates"`. When a search result lacks a reliable event or publication date, the Worker may fetch a capped number of public source pages and inspect supported HTML metadata, JSON-LD, and visible article text. Redirects are followed manually with URL validation; requests to localhost/private address ranges are rejected. Source-page enrichment is best-effort: blocked social platforms, JavaScript-rendered pages, removed links, and incomplete snippets can still leave a result undated.
+The Worker identifies its logic in the response with `filterVersion: 7` and `buildVersion: "timeline-v5.2-context-dates"`. It reads a capped number of public source pages for publication/event metadata and visible article text when search results do not have reliable dates. Redirects are followed manually with URL validation; requests to localhost and private address ranges are rejected. This enrichment is best-effort: blocked platforms, JavaScript-rendered pages, removed links, and incomplete source text can still leave a result undated.
 
-The response diagnostics now include `originalSourceFetchCount`, `originalSourceFetchFailedCount`, `originalSourcePageReadCount`, and `originalSourceDateEnrichedCount`. Results may carry `dateEnrichmentSource`, `originalSourceChecked`, and `incidentTags`. A date parsed from an article page is still a lead and should be checked at the source; an article publication date must not be relabelled as the event date.
+The response diagnostics include `originalSourceFetchCount`, `originalSourceFetchFailedCount`, `originalSourcePageReadCount`, `originalSourceDateEnrichedCount`, and `knownHistoricalDateMatchCount`. Results may carry `dateEnrichmentSource`, `originalSourceChecked`, and `incidentTags`. A publication date must not be relabelled as the event date. When a date is extracted from the original article body, the sentence must contain event context that matches the incident type in the search result; an unrelated date in a general protest timeline is not enough.
 
-The query-pass field (`searchPass` / `searchWindow`) records which search query returned the result. It does not record the incident date or prove that an incident happened within that period. Lists by time bucket are disjoint. The combined `results` array should be used as the single feed to avoid presenting the same item from multiple bucket arrays.
+A small set of explicitly recognized historical references covers the January 14, 2016 Jakarta bombings reported by Amnesty International and CNN. These narrow matches provide a dated historical classification for those known references; they are not a general-purpose event database and do not replace source verification.
 
-Undated results use `alertEligibility: "manual-review-only"` and must not be shown or interpreted as current alerts. `currentIncidentConfirmed` remains false because this pipeline does not independently verify incidents or current local danger.
+Generic crime statistics and overview pages are filtered separately from specific incident reports. Fatality tags recognize plural language such as `deaths` and `fatalities`, including where an unrest report's primary category remains `unrest`.
+
+The query-pass field (`searchPass` / `searchWindow`) records which search query returned the result. It does not record the incident date or prove that an incident happened within that period. Time-bucket arrays are disjoint. Use the combined `results` array as the single feed to avoid showing an item multiple times.
+
+Undated results use `alertEligibility: "manual-review-only"` and must not be treated as current alerts. `currentIncidentConfirmed` remains false because this pipeline does not independently verify current incidents or local danger.
 
 ## Personalized recommendation
 
