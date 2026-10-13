@@ -2408,6 +2408,11 @@
                 ));
             }
 
+            // Add evidence-triggered guidance before the always-available evergreen safety cards.
+            // The cards are based on all matched news leads, grouped by topic, not only the single
+            // signal selected for the compact Personal Safety Overview panel.
+            if (webIntel.length) renderNewsDrivenRecommendations(container);
+
             const cards = [
                 {
                     icon: 'fa-mobile-screen-button',
