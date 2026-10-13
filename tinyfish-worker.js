@@ -116,8 +116,8 @@ export default {
             // Keep rounded coordinates as a broad-area fallback.
         }
 
-        const query = 'recent local news reports about crime, theft, robbery, assault, public safety, road accidents, traffic crashes, fires, or emergency incidents near ' +
-            locality + ' in the last 24 hours. Return a small number of relevant news or official-source links. Do not invent events.';
+        const query = 'recent local news reports and official public-safety notices about pickpocketing, bag snatching, phone theft, robbery, assault, card skimming, payment-card fraud, scams, road traffic accidents, vehicle crashes, flooding, fires, or emergency incidents near ' +
+            locality + ' in the last 24 hours. Prefer police, fire and rescue services, local government, transport agencies, and established local newsrooms. Return relevant source links and preserve the original publication date and reported location when available. Do not invent events.';
 
         try {
             const searchUrl = new URL('https://api.search.tinyfish.ai/');
