@@ -17,6 +17,16 @@ The five-year range is a search horizon, **not a guarantee of comprehensive cove
 
 The Worker applies a municipality-name relevance check to the title and snippet; a city name that appears only in a URL is not sufficient. It distinguishes `city-mentioned-location-unverified`, `city-mentioned-context-unclear`, and `national-context`. These are scope hints, not verified incident coordinates. Diagnostics report duplicate items, missing source URLs, generic/foreign references rejected, out-of-window items rejected, undated items, and failed search windows. Reports containing explosions/blasts and fatality terms are categorized explicitly. When publication and event dates are absent, they stay undated; headline wording such as "BREAKING" is not treated as a reliable timestamp. Hashtag locations and city-headline formats can establish a city mention, but do not establish an exact incident point.
 
+## Timeline enrichment and verification (Worker v5.1)
+
+The Worker identifies its deployed logic in the response with `filterVersion: 6` and `buildVersion: "timeline-v5.1-source-dates"`. When a search result lacks a reliable event or publication date, the Worker may fetch a capped number of public source pages and inspect supported HTML metadata, JSON-LD, and visible article text. Redirects are followed manually with URL validation; requests to localhost/private address ranges are rejected. Source-page enrichment is best-effort: blocked social platforms, JavaScript-rendered pages, removed links, and incomplete snippets can still leave a result undated.
+
+The response diagnostics now include `originalSourceFetchCount`, `originalSourceFetchFailedCount`, `originalSourcePageReadCount`, and `originalSourceDateEnrichedCount`. Results may carry `dateEnrichmentSource`, `originalSourceChecked`, and `incidentTags`. A date parsed from an article page is still a lead and should be checked at the source; an article publication date must not be relabelled as the event date.
+
+The query-pass field (`searchPass` / `searchWindow`) records which search query returned the result. It does not record the incident date or prove that an incident happened within that period. Lists by time bucket are disjoint. The combined `results` array should be used as the single feed to avoid presenting the same item from multiple bucket arrays.
+
+Undated results use `alertEligibility: "manual-review-only"` and must not be shown or interpreted as current alerts. `currentIncidentConfirmed` remains false because this pipeline does not independently verify incidents or current local danger.
+
 ## Personalized recommendation
 
 Immediately below Personal Safety Overview, the app classifies nearby mapped hazards and TinyFish local search results into themes such as theft/pickpocketing, payment-card fraud, road accidents, floods, fires, and earthquakes. Recommendations include practical next steps and distances to the nearest mapped police station, hospital, or fire station when OpenStreetMap provides those points. Facility opening status and whether it is an appropriate destination are not verified.
