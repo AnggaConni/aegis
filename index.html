@@ -1172,6 +1172,7 @@
                 }));
                 selectedRouteIndex = 0;
                 applyRouteOption(0, true);
+                fetchRouteWeather(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
                 fetchTinyFishIntel(routeDestination.lat, routeDestination.lng, routeDestinationLabel, true);
             } catch (error) {
                 console.warn('Route calculation failed:', error);
@@ -1311,7 +1312,6 @@
             renderRouteAlternatives();
             renderRouteWarnings();
             renderRouteSteps(route.legs);
-            fetchRouteWeather(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
             setRouteStatus('Prototype route only: static directions, no continuous GPS tracking or automatic rerouting. Estimates and hazard coverage are not guaranteed.', 'warning');
         }
 
