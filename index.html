@@ -664,7 +664,7 @@
             updateOfflinePlanNote();
             const status = document.getElementById('route-status');
             if (!navigator.onLine) {
-                ['bmkg', 'usgs', 'gdacs', 'petabencana', 'osm'].forEach(id => {
+                ['bmkg', 'usgs', 'gdacs', 'petabencana', 'osm', 'crimeapi'].forEach(id => {
                     const node = document.getElementById('status-' + id);
                     if (node && (node.textContent === 'Waiting' || node.dataset.state === 'error')) {
                         updateSourceStatus(id, 'Offline · cached only', 'neutral');
@@ -828,6 +828,10 @@
             setRouteStatus('Refreshing public reports. Existing route will be rechecked against the new feed…', 'neutral');
             try {
                 await fetchRealData(userLocation.lat, userLocation.lng);
+                await Promise.allSettled([
+                    fetchTinyFishIntel(userLocation.lat, userLocation.lng, 'Current location'),
+                    fetchCrimeApi(userLocation.lat, userLocation.lng)
+                ]);
                 renderMapMarkers();
                 renderAwarenessOverview();
                 renderSafetyRecommendations();
@@ -843,7 +847,6 @@
                 } else {
                     setRouteStatus('Public feeds refreshed. Select a destination to check the route corridor.', 'ok');
                 }
-                await fetchTinyFishIntel(userLocation.lat, userLocation.lng);
             } catch (error) {
                 console.warn('Safety feed refresh failed:', error);
                 setRouteStatus('Some public feeds could not be refreshed. Check source status below.', 'warning');
@@ -1170,6 +1173,7 @@
                     url: safeHttpUrl(row.url),
                     source: String(row.source || 'TinyFish Search'),
                     area: String(row.area || localityLabel || 'Approximate search area'),
+                    contextLabel: String(localityLabel || 'Current location'),
                     publishedAt: row.publishedAt || row.published_at || null,
                     verified: false
                 })).filter(row => row.url);
@@ -1184,6 +1188,68 @@
             } catch (error) {
                 console.warn('TinyFish search failed:', error);
                 updateSourceStatus('tinyfish', 'Unavailable', 'error');
+            }
+        }
+
+        function isSupportedPoliceApiArea(lat, lng) {
+            const englandWalesApprox = lat >= 50 && lat <= 55.3 && lng >= -6.5 && lng <= 2.1;
+            const northernIrelandApprox = lat >= 54 && lat <= 55.5 && lng >= -8.3 && lng <= -5.2;
+            return englandWalesApprox || northernIrelandApprox;
+        }
+
+        async function fetchCrimeApi(lat, lng) {
+            const sourceNode = document.getElementById('status-crimeapi');
+            // The free data.police.uk API covers England, Wales and Northern Ireland,
+            // not Indonesia and not a complete Scotland feed. Do not imply global coverage.
+            if (!isSupportedPoliceApiArea(Number(lat), Number(lng))) {
+                incidents = incidents.filter(item => item.type !== 'crime');
+                routeHazardCandidates = routeHazardCandidates.filter(item => item.type !== 'crime');
+                updateSourceStatus('crimeapi', 'No Indonesia public feed', 'neutral');
+                return;
+            }
+            updateSourceStatus('crimeapi', 'Checking UK records…', 'neutral');
+            try {
+                const endpoint = new URL('https://data.police.uk/api/crimes-street/all-crime');
+                endpoint.searchParams.set('lat', String(lat));
+                endpoint.searchParams.set('lng', String(lng));
+                const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } }, 15000);
+                if (!response.ok) throw new Error('Police API HTTP ' + response.status);
+                const rows = await response.json();
+                if (!Array.isArray(rows)) throw new Error('Unexpected Police API response');
+                incidents = incidents.filter(item => item.type !== 'crime');
+                routeHazardCandidates = routeHazardCandidates.filter(item => item.type !== 'crime');
+                let latestMonth = '';
+                rows.forEach((row, index) => {
+                    const location = row.location || {};
+                    const crimeLat = Number(location.latitude);
+                    const crimeLng = Number(location.longitude);
+                    if (!Number.isFinite(crimeLat) || !Number.isFinite(crimeLng)) return;
+                    const dist = calculateDistance(lat, lng, crimeLat, crimeLng);
+                    const category = String(row.category || 'recorded-crime').replace(/-/g, ' ');
+                    const month = String(row.month || '');
+                    if (month && month > latestMonth) latestMonth = month;
+                    const street = location.street && location.street.name ? location.street.name : 'approximate street location';
+                    const incident = {
+                        id: 'ukcrime_' + String(row.persistent_id || row.id || (month + '_' + index)),
+                        type: 'crime',
+                        title: 'Police data · ' + category,
+                        desc: 'Recorded crime category: ' + category + '. Approximate location near ' + street +
+                            '. This is historical street-level data, not a live incident alert or exact crime location.',
+                        lat: crimeLat, lng: crimeLng, dist: dist,
+                        timestamp: month ? month + '-01T00:00:00Z' : null,
+                        timeText: month ? 'Recorded month: ' + month : 'Recorded month not supplied',
+                        sourceName: 'data.police.uk · recorded crime',
+                        sourceUrl: 'https://data.police.uk/',
+                        confidenceLabel: 'Official UK historical data · anonymised approximate location',
+                        crimeMonth: month
+                    };
+                    routeHazardCandidates.push(incident);
+                    if (dist <= 3.5) addIncidentIfUnique(incident);
+                });
+                updateSourceStatus('crimeapi', 'UK only · ' + rows.length + ' records' + (latestMonth ? ' · ' + latestMonth : ''), 'ok');
+            } catch (error) {
+                console.warn('Police crime API failed:', error);
+                updateSourceStatus('crimeapi', 'Unavailable', 'error');
             }
         }
 
