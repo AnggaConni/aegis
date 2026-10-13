@@ -2581,6 +2581,7 @@
             if (!container) return;
             container.innerHTML = '';
             const hazards = currentNearbyHazards(10);
+            const regionalHazards = currentRegionalHazards(50);
 
             if (hazards.length) {
                 const types = new Set(hazards.map(item => item.type));
@@ -2622,6 +2623,35 @@
                 );
                 alertCard.classList.add('border-amber-200');
                 container.appendChild(alertCard);
+            }
+
+            if (regionalHazards.length) {
+                const regional = regionalHazards[0];
+                const distanceKm = calculateDistance(userLocation.lat, userLocation.lng, Number(regional.lat), Number(regional.lng));
+                const title = regional.type === 'earthquake' ? 'Regional earthquake signal'
+                    : regional.type === 'flood' ? 'Regional flood-report context'
+                    : regional.type === 'fire_event' ? 'Regional fire or wildfire context'
+                    : 'Regional hazard context';
+                const magnitudeText = Number.isFinite(Number(regional.magnitude)) ? ' Magnitude: M ' + Number(regional.magnitude).toFixed(1) + '.' : '';
+                const card = createRecommendationCard(
+                    'fa-earth-americas',
+                    title,
+                    regionalHazards.length + ' recent regional signal(s) are between 10 and 50 km away. Nearest: ' +
+                        (regional.title || regional.type) + ' (' + distanceKm.toFixed(1) + ' km).' + magnitudeText +
+                        ' This is regional context, not a prediction of impact at your exact location.',
+                    [
+                        'Check the original source, event time, and current local authority advisories before changing plans.',
+                        'For earthquakes, magnitude and epicentral distance alone do not predict the shaking at your location; consider official felt reports and local instructions.',
+                        'Keep ordinary preparedness steps in place. Do not treat a regional signal as proof that evacuation is required.'
+                    ],
+                    'Review regional event on map',
+                    () => {
+                        switchTab('radar');
+                        openIncidentSheet(regional);
+                    }
+                );
+                card.classList.add('border-slate-200');
+                container.appendChild(card);
             }
 
             if (webIntel.length) {
@@ -3255,7 +3285,7 @@
             const padLng = radius / (111320 * Math.max(0.05, Math.cos(midLat * Math.PI / 180)));
             const candidates = new Map();
             routeHazardCandidates.concat(incidents.filter(isHazardForRouting)).forEach(inc => {
-                if (inc && isHazardForRouting(inc) && inc.id) candidates.set(String(inc.id), inc);
+                if (inc && isHazardForRouting(inc) && isFreshHazardSignal(inc) && inc.id) candidates.set(String(inc.id), inc);
             });
 
             const rows = Array.from(candidates.values())
@@ -3273,8 +3303,8 @@
                     const duplicate = deduplicated.some(existing => {
                         if (existing.incident.type !== 'earthquake') return false;
                         const otherStamp = new Date(existing.incident.timestamp || 0).getTime();
-                        return calculateDistance(existing.incident.lat, existing.incident.lng, inc.lat, inc.lng) < 35 &&
-                            Math.abs(stamp - otherStamp) < 90 * 60 * 1000;
+                        return calculateDistance(existing.incident.lat, existing.incident.lng, inc.lat, inc.lng) < 15 &&
+                            Math.abs(stamp - otherStamp) < 10 * 60 * 1000;
                     });
                     if (duplicate) return;
                 }
