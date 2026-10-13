@@ -1975,13 +1975,62 @@
             updateSaveButtonUI();
         }
 
+        function createHistoricalAwarenessSection(container) {
+            const recentWindowDays = 30;
+            const historyWindowYears = 5;
+            const historic = webIntel
+                .filter(article => Number.isFinite(Number(article.ageYears)) &&
+                    Number(article.ageYears) > recentWindowDays / 365.2425 &&
+                    Number(article.ageYears) <= historyWindowYears)
+                .sort((a, b) => Number(a.ageYears) - Number(b.ageYears));
+            if (!historic.length) return;
+
+            const heading = document.createElement('div');
+            heading.className = 'pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-500';
+            heading.textContent = 'Historical awareness · incidents reported up to 5 years ago';
+            container.appendChild(heading);
+
+            historic.slice(0, 12).forEach(article => {
+                const item = document.createElement('div');
+                item.className = 'radar-intel-item';
+                const icon = document.createElement('span');
+                icon.className = 'radar-intel-icon';
+                icon.style.backgroundColor = '#64748b';
+                icon.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i>';
+                const wrap = document.createElement('span');
+                wrap.className = 'min-w-0 flex-1';
+                const title = document.createElement('span');
+                title.className = 'radar-intel-title block';
+                title.textContent = article.title || 'Historical public-safety report';
+                const meta = document.createElement('span');
+                meta.className = 'radar-intel-meta block';
+                const age = Number(article.ageYears);
+                meta.textContent = (article.category || classifySafetyText(article.title + ' ' + article.snippet)).replace(/_/g, ' ') +
+                    ' · ' + (age < 1 ? 'Under 1 year ago' : age.toFixed(1) + ' years ago') +
+                    ' · ' + (article.area || 'municipality-level search') +
+                    ' · historical, not a live alert';
+                const link = document.createElement('a');
+                link.className = 'block mt-1 text-[10px] text-blue-700 font-semibold underline';
+                link.href = article.url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = 'Review original source ↗';
+                wrap.appendChild(title);
+                wrap.appendChild(meta);
+                wrap.appendChild(link);
+                item.appendChild(icon);
+                item.appendChild(wrap);
+                container.appendChild(item);
+            });
+        }
+
         function renderRadarSidebar(filterType = 'all') {
             activeRadarFilter = filterType;
             const container = document.getElementById('radar-feed-container');
             if (!container) return;
             container.innerHTML = '';
 
-            const disasterTypes = ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster'];
+            const disasterTypes = ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster', 'crime'];
             const filtered = filterType === 'all'
                 ? incidents
                 : filterType === 'safezone'
@@ -2030,7 +2079,7 @@
                 separator.className = 'pt-3 pb-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700';
                 separator.textContent = 'Local web signals · verify before acting';
                 container.appendChild(separator);
-                webIntel.slice(0, 12).forEach(article => {
+                webIntel.filter(article => !Number.isFinite(Number(article.ageYears)) || Number(article.ageYears) <= (30 / 365.2425)).slice(0, 12).forEach(article => {
                     const item = document.createElement('button');
                     item.type = 'button';
                     item.className = 'radar-intel-item';
@@ -2053,6 +2102,7 @@
                     item.addEventListener('click', () => openWebIntelDetail(article));
                     container.appendChild(item);
                 });
+                createHistoricalAwarenessSection(container);
             }
         }
 
