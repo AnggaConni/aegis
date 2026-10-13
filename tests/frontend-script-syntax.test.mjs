@@ -179,7 +179,7 @@ test('NASA EONET is a separate global natural-event source and never plots polyg
 });
 
 test('BMKG feed expansion only elevates recent timestamped earthquakes', () => {
-  assert.match(html, /const ageHours = stamp \? \(Date\.now\(\) - new Date\(stamp\)\.getTime\(\) \/ 3600000\) : NaN/);
+  assert.match(html, /const ageHours = stamp \? \(Date\.now\(\) - new Date\(stamp\)\.getTime\(\)\) \/ 3600000 : NaN/);
   assert.match(html, /ageHours > 72/);
   assert.match(html, /magnitude >= 4\.5/);
   assert.match(html, /tsunamiPotential/);
