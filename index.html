@@ -376,6 +376,7 @@
                 <button id="feed-filter-safe" onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Emergency services</button>
             </div>
 
+            <section id="safety-recommendations" class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4" aria-label="Safety recommendations"></section>
             <div id="feed-container" class="flex flex-col gap-3"></div>
         </div>
 
@@ -1404,17 +1405,16 @@
                         'If shaking begins indoors, drop, cover, and hold on; evacuate after shaking stops if needed.'
                     ];
                 }
-                const alert = document.createElement('div');
-                alert.className = 'recommendation-card border-amber-200';
-                alert.appendChild(createRecommendationCard(
+                const alertCard = createRecommendationCard(
                     'fa-triangle-exclamation',
                     title,
                     hazards.length + ' mapped hazard signal(s) are within about 10 km. This is a situational prompt, not an official risk rating.',
                     tips,
                     'Plan a route to a verified safer place',
                     openNavigationForEscapePlanning
-                ));
-                container.appendChild(alert);
+                );
+                alertCard.classList.add('border-amber-200');
+                container.appendChild(alertCard);
             }
 
             const cards = [
@@ -2246,35 +2246,60 @@
         function filterFeed(type, button) {
             activeFeedFilter = type;
             document.querySelectorAll('.filter-btn').forEach(btn => {
-                btn.classList.remove('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
+                btn.classList.remove('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200', 'active');
                 btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
             });
             if (button) {
                 button.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
-                button.classList.add('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200');
+                button.classList.add('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200', 'active');
             }
             renderFeed(type);
         }
 
-        function renderFeed(filterType) {
+        function renderFeed(filterType = 'guide') {
             const container = document.getElementById('feed-container');
+            const recommendations = document.getElementById('safety-recommendations');
             container.innerHTML = '';
-            const filtered = filterType === 'all'
-                ? incidents
-                : filterType === 'safezone'
-                    ? incidents.filter(i => ['police', 'hospital', 'fire_station'].includes(i.type))
-                    : filterType === 'news'
-                        ? []
-                        : filterType === 'earthquake'
-                            ? incidents.filter(i => i.type === 'earthquake')
-                            : incidents.filter(i => i.type === filterType);
-            const showWeb = filterType === 'all' || filterType === 'news';
+            const showRecommendations = filterType === 'guide' || filterType === 'all';
+            recommendations.classList.toggle('hidden', !showRecommendations);
 
-            if (!filtered.length && !(showWeb && webIntel.length)) {
-                container.innerHTML = '<p class="text-slate-500 text-center text-sm py-8 font-medium">No matching reports in the currently available feeds.</p>';
-                return;
+            let filtered = [];
+            if (filterType === 'all') {
+                filtered = incidents;
+            } else if (filterType === 'incidents') {
+                filtered = incidents.filter(item => !['police', 'hospital', 'fire_station'].includes(item.type));
+            } else if (filterType === 'safezone') {
+                filtered = incidents.filter(item => ['police', 'hospital', 'fire_station'].includes(item.type));
+            } else if (filterType === 'earthquake') {
+                filtered = incidents.filter(item => item.type === 'earthquake');
+            } else if (filterType === 'news' || filterType === 'guide') {
+                filtered = [];
+            } else {
+                filtered = incidents.filter(item => item.type === filterType);
             }
-            filtered.forEach(inc => container.appendChild(createIncidentCard(inc)));
+
+            const showWeb = filterType === 'all' || filterType === 'news';
+            const showNoReportsMessage = !filtered.length && !(showWeb && webIntel.length) && filterType !== 'guide';
+            if (showNoReportsMessage) {
+                const empty = document.createElement('div');
+                empty.className = 'recommendation-card text-center';
+                const title = document.createElement('p');
+                title.className = 'text-sm font-bold text-slate-700';
+                title.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
+                    ? 'TinyFish News & OSINT is not connected yet.'
+                    : filterType === 'news'
+                        ? 'No web signals are available right now.'
+                        : 'No matching reports are available in the current feeds.';
+                const note = document.createElement('p');
+                note.className = 'text-xs text-slate-500 mt-2 leading-relaxed';
+                note.textContent = filterType === 'news' && !TINYFISH_PROXY_URL
+                    ? 'Configure the Cloudflare Worker URL in TINYFISH_PROXY_URL to enable local news search. Never place the API key in public browser code.'
+                    : 'A lack of reports is not proof that an area is safe. Check official local guidance.';
+                empty.appendChild(title);
+                empty.appendChild(note);
+                container.appendChild(empty);
+            }
+            filtered.forEach(item => container.appendChild(createIncidentCard(item)));
             if (showWeb) {
                 webIntel.forEach(article => container.appendChild(createWebIntelCard(article)));
             }
