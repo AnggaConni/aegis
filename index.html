@@ -1194,7 +1194,12 @@
                     timelineBucket: String(row.timelineBucket || 'undated'),
                     timelineLabel: String(row.timelineLabel || row.recencyLabel || 'Date unconfirmed'),
                     recencyLabel: String(row.recencyLabel || row.timelineLabel || 'Date unconfirmed'),
+                    searchPass: String(row.searchPass || row.searchWindow || ''),
+                    searchPassLabel: String(row.searchPassLabel || row.searchPass || row.searchWindow || ''),
                     searchWindow: String(row.searchWindow || ''),
+                    searchWindowMeaning: String(row.searchWindowMeaning || 'search-pass-only-not-publication-or-event-date'),
+                    alertEligibility: String(row.alertEligibility || (String(row.timelineBucket || 'undated') === 'undated' ? 'manual-review-only' : 'unverified-search-lead')),
+                    currentIncidentConfirmed: row.currentIncidentConfirmed === true,
                     dateStatus: String(row.dateStatus || ''),
                     eventLocation: row.eventLocation || null,
                     eventLocationScope: String(row.eventLocationScope || 'city-mentioned-context-unclear'),
@@ -2156,7 +2161,8 @@
                 const meta = document.createElement('span');
                 meta.className = 'radar-intel-meta block';
                 meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
-                    getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search');
+                    getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search') +
+                    (getWebIntelTimelineBucket(article) === 'undated' ? ' · Manual review only — not a current alert' : '');
                 textWrap.appendChild(title);
                 textWrap.appendChild(meta);
                 item.appendChild(icon);
@@ -2897,7 +2903,8 @@
             meta.className = 'text-[10px] font-semibold mt-2';
             meta.style.color = historical || undated ? '#64748b' : '#b45309';
             meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
-                getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search');
+                getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search') +
+                (undated ? ' · Manual review only — not a current alert' : '');
 
             const dateMeta = document.createElement('p');
             dateMeta.className = 'text-[10px] text-slate-500 mt-1 leading-relaxed';
