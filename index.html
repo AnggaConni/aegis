@@ -222,7 +222,10 @@
                                 <h2 class="text-sm font-extrabold text-slate-900"><i class="fa-solid fa-satellite-dish text-blue-600 mr-1"></i> Nearby Intel</h2>
                                 <p class="text-[10px] text-slate-500 mt-1">Reports and services near your location</p>
                             </div>
-                            <span id="intel-count" class="bg-blue-50 text-blue-700 rounded-full px-2 py-1 text-[10px] font-bold">0 items</span>
+                            <div class="flex items-center gap-1.5">
+                                <span id="intel-count" class="bg-blue-50 text-blue-700 rounded-full px-2 py-1 text-[10px] font-bold">0 items</span>
+                                <button id="refresh-feeds-btn" type="button" onclick="refreshSafetyFeeds()" title="Refresh public safety feeds" aria-label="Refresh public safety feeds" class="w-7 h-7 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-blue-700 flex items-center justify-center"><i class="fa-solid fa-rotate"></i></button>
+                            </div>
                         </div>
 
                         <section class="route-planner" aria-label="Route planner">
@@ -399,6 +402,7 @@
         let routeEndMarker = null;
         let routeWarnings = [];
         let routeBufferMeters = 1000;
+        let safetyRefreshBusy = false;
 
         function updateSourceStatus(sourceId, label, state = 'neutral') {
             const node = document.getElementById('status-' + sourceId);
@@ -486,6 +490,40 @@
             requestAnimationFrame(() => map.invalidateSize());
             // Optional TinyFish results go through a proxy and are not assumed to have exact coordinates.
             fetchTinyFishIntel(userLocation.lat, userLocation.lng);
+        }
+
+        async function refreshSafetyFeeds() {
+            if (safetyRefreshBusy || !map) return;
+            safetyRefreshBusy = true;
+            const button = document.getElementById('refresh-feeds-btn');
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            }
+            setRouteStatus('Refreshing public reports. Existing route will be rechecked against the new feed…', 'neutral');
+            try {
+                await fetchRealData(userLocation.lat, userLocation.lng);
+                renderMapMarkers();
+                renderFeed(activeFeedFilter);
+                renderRadarSidebar(activeRadarFilter);
+                renderSaved();
+                if (routeOptions.length) {
+                    routeOptions.forEach(route => { route.warnings = getRouteWarnings(route.geometry.coordinates); });
+                    applyRouteOption(selectedRouteIndex, false);
+                } else {
+                    setRouteStatus('Public feeds refreshed. Select a destination to check the route corridor.', 'ok');
+                }
+                await fetchTinyFishIntel(userLocation.lat, userLocation.lng);
+            } catch (error) {
+                console.warn('Safety feed refresh failed:', error);
+                setRouteStatus('Some public feeds could not be refreshed. Check source status below.', 'warning');
+            } finally {
+                safetyRefreshBusy = false;
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+                }
+            }
         }
 
         // --- REAL API DATA FETCHING ---
@@ -772,7 +810,29 @@
         }
 
         function centerMapOnUser() {
-            if (map) map.setView([userLocation.lat, userLocation.lng], 14, { animate: true });
+            if (!navigator.geolocation) {
+                setRouteStatus('This browser does not provide GPS location.', 'error');
+                return;
+            }
+            setRouteStatus('Updating your current GPS location…', 'neutral');
+            navigator.geolocation.getCurrentPosition(async position => {
+                userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                usingFallbackLocation = false;
+                if (userMarker) userMarker.setLatLng([userLocation.lat, userLocation.lng]);
+                document.getElementById('gps-status').innerHTML =
+                    '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span><span class="text-green-600 font-semibold text-xs">GPS Active</span>';
+                if (map) map.setView([userLocation.lat, userLocation.lng], Math.max(14, map.getZoom()), { animate: true });
+                updateSaveButtonUI();
+                await refreshSafetyFeeds();
+                if (routeDestination) {
+                    await calculateRouteToCoordinates(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
+                } else {
+                    setRouteStatus('GPS updated. Choose a destination to calculate a route and check reports along it.', 'ok');
+                }
+            }, error => {
+                console.warn('GPS update failed:', error);
+                setRouteStatus('Unable to update GPS. Check location permission and try again.', 'error');
+            }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
         }
 
         // --- UI INTERACTIONS ---
@@ -1023,6 +1083,16 @@
             selectingRouteDestination = false;
             document.getElementById('route-go').disabled = true;
             setRouteStatus('Calculating driving route and checking mapped hazards…', 'neutral');
+            if (routeLayer) map.removeLayer(routeLayer);
+            if (routeStartMarker) map.removeLayer(routeStartMarker);
+            if (routeEndMarker) map.removeLayer(routeEndMarker);
+            routeLayer = routeStartMarker = routeEndMarker = null;
+            document.getElementById('route-summary').classList.add('hidden');
+            document.getElementById('route-alternatives').innerHTML = '';
+            document.getElementById('route-alerts').innerHTML = '';
+            document.getElementById('route-steps').innerHTML = '';
+            routeOptions = [];
+            routeWarnings = [];
             routeDestination = { lat: Number(destLat), lng: Number(destLng) };
             routeDestinationLabel = label || 'Destination';
             try {
@@ -1162,7 +1232,7 @@
             renderRouteAlternatives();
             renderRouteWarnings();
             renderRouteSteps(route.legs);
-            setRouteStatus('Route estimated by the public OSRM demo service. Route estimates and hazard coverage are not guaranteed.', 'warning');
+            setRouteStatus('Prototype route only: static directions, no continuous GPS tracking or automatic rerouting. Estimates and hazard coverage are not guaranteed.', 'warning');
         }
 
         function renderRouteAlternatives() {
