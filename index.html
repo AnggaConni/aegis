@@ -324,6 +324,7 @@
             haze: { color: 'marker-haze', hex: '#64748b', icon: 'fa-smog', name: 'Haze report', source: 'PetaBencana' },
             wind: { color: 'marker-wind', hex: '#0891b2', icon: 'fa-wind', name: 'Wind report', source: 'PetaBencana' },
             disaster: { color: 'marker-disaster', hex: '#b45309', icon: 'fa-triangle-exclamation', name: 'Disaster report', source: 'PetaBencana' },
+            news: { color: 'marker-news', hex: '#eab308', icon: 'fa-newspaper', name: 'Legacy news signal', source: 'Previous saved report' },
             police: { color: 'marker-police', hex: '#3b82f6', icon: 'fa-building-shield', name: 'Police Station', source: 'OpenStreetMap' },
             hospital: { color: 'marker-hospital', hex: '#ef4444', icon: 'fa-truck-medical', name: 'Hospital', source: 'OpenStreetMap' },
             fire_station: { color: 'marker-fire_station', hex: '#f97316', icon: 'fa-fire-extinguisher', name: 'Fire Station', source: 'OpenStreetMap' }
@@ -959,6 +960,14 @@
 
         function updateSaveButtonUI() {
             const btn = document.getElementById('btn-save');
+            const routeBtn = document.getElementById('btn-route');
+            const hasCoordinates = !!currentSelectedIncident &&
+                Number.isFinite(Number(currentSelectedIncident.lat)) &&
+                Number.isFinite(Number(currentSelectedIncident.lng));
+            routeBtn.disabled = !hasCoordinates;
+            routeBtn.classList.toggle('opacity-50', !hasCoordinates);
+            routeBtn.classList.toggle('cursor-not-allowed', !hasCoordinates);
+
             if (!currentSelectedIncident) {
                 btn.innerHTML = '<i class="fa-regular fa-bookmark mr-1"></i> Save';
                 btn.disabled = true;
