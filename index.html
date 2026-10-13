@@ -137,15 +137,30 @@
         @media (max-width: 800px) {
             #view-radar { overflow-y: auto !important; overflow-x: hidden !important; }
             #radar-workspace { height: auto; min-height: 100%; }
-            #radar-top-layout { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(260px, 45vh) auto; flex: none; padding: 8px; gap: 8px; }
-            #map-panel { height: 45vh; min-height: 260px; transition: height .22s ease, min-height .22s ease; }
+            #view-radar { height: calc(100vh - 60px - 54px - env(safe-area-inset-bottom)); height: calc(100dvh - 60px - 54px - env(safe-area-inset-bottom)); padding-bottom: 8px; }
+            #radar-workspace { height: auto; min-height: 0; }
+            #radar-top-layout { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(220px, 38dvh) auto; flex: none; padding: 7px; gap: 7px; }
+            #map-panel { height: clamp(220px, 38dvh, 310px); min-height: 220px; transition: height .22s ease, min-height .22s ease; }
+            #radar-sidebar { max-height: none; overflow: visible; padding: 10px; }
+            #bottom-navigation {
+                height: calc(54px + env(safe-area-inset-bottom)) !important;
+                min-height: calc(54px + env(safe-area-inset-bottom));
+                padding-bottom: env(safe-area-inset-bottom);
+                box-sizing: border-box;
+            }
+            #bottom-navigation .nav-btn { width: 60px; min-width: 54px; gap: 0; padding: 2px 0; }
+            #bottom-navigation .nav-btn > i,
+            #bottom-navigation .nav-btn > div i { font-size: 17px !important; line-height: 1; margin-bottom: 3px !important; }
+            #bottom-navigation .nav-btn > span { font-size: 9px !important; line-height: 11px; }
+            #bottom-navigation .nav-btn > div { line-height: 1; }
             #radar-top-layout.map-collapsed { grid-template-rows: 54px auto; }
             #map-panel.map-collapsed { height: 54px; min-height: 54px !important; max-height: 54px; }
             #map-panel.map-collapsed #map,
             #map-panel.map-collapsed #map-label,
             #map-panel.map-collapsed #center-map-button { display: none; }
             #map-panel.map-collapsed #map-tools { top: 6px; left: 8px; right: 8px; justify-content: center; }
-            .map-mobile-toggle {
+            /* Higher specificity keeps the mobile toggle visible despite the desktop hide rule below. */
+            #map-panel .map-mobile-toggle {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
@@ -155,11 +170,12 @@
                 border: 1px solid #bfdbfe;
                 border-radius: 10px;
                 color: #1d4ed8;
-                background: rgba(255,255,255,.97);
+                background: rgba(255,255,255,.98);
                 box-shadow: 0 2px 8px rgba(15,23,42,.16);
                 font-size: 11px;
                 font-weight: 800;
                 white-space: nowrap;
+                pointer-events: auto;
             }
             #map-panel.map-collapsed #mobile-map-toggle {
                 width: 100%;
@@ -505,7 +521,7 @@
     </main>
 
     <!-- Bottom Navigation -->
-    <nav class="h-[64px] bg-white border-t border-slate-200 shrink-0 z-20 flex justify-around items-center px-2 pb-safe shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+    <nav id="bottom-navigation" class="h-[64px] bg-white border-t border-slate-200 shrink-0 z-20 flex justify-around items-center px-2 pb-safe shadow-[0_-2px_10px_rgba(0,0,0,0.02)]" aria-label="Main navigation">
         <button onclick="switchTab('radar')" id="tab-radar" class="nav-btn active flex flex-col items-center justify-center w-16 h-full text-primary">
             <i class="fa-solid fa-crosshairs text-xl mb-1"></i>
             <span class="text-[10px] font-semibold">Radar</span>
