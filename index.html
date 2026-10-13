@@ -931,7 +931,7 @@
                 const distance = calculateDistance(existing.lat, existing.lng, incident.lat, incident.lng);
                 const t1 = new Date(existing.timestamp || 0).getTime();
                 const t2 = new Date(incident.timestamp || 0).getTime();
-                return distance < 35 && Math.abs(t1 - t2) < 90 * 60 * 1000;
+                return distance < 15 && Math.abs(t1 - t2) < 10 * 60 * 1000;
             });
             if (duplicate) return false;
             incidents.push(incident);
@@ -1806,10 +1806,34 @@
             }
         }
 
+        function getHazardAgeHours(item) {
+            const stamp = item && item.timestamp ? new Date(item.timestamp).getTime() : NaN;
+            if (!Number.isFinite(stamp)) return null;
+            const ageHours = (Date.now() - stamp) / 3600000;
+            return ageHours >= -1 ? Math.max(0, ageHours) : null;
+        }
+
+        function isFreshHazardSignal(item) {
+            const ageHours = getHazardAgeHours(item);
+            if (ageHours === null) return false;
+            if (item.cachedLocal && item.cacheSnapshotAt) {
+                const cacheAgeHours = (Date.now() - new Date(item.cacheSnapshotAt).getTime()) / 3600000;
+                if (!Number.isFinite(cacheAgeHours) || cacheAgeHours > 24) return false;
+            }
+            const source = String(item.sourceName || '');
+            if (/BMKG/i.test(source)) return ageHours <= 72;
+            if (/USGS/i.test(source)) return ageHours <= 36;
+            if (/PetaBencana/i.test(source)) return ageHours <= 12;
+            if (/GDACS/i.test(source)) return ageHours <= 14 * 24;
+            if (/NASA EONET/i.test(source)) return ageHours <= 7 * 24;
+            return ageHours <= 72;
+        }
+
         function currentNearbyHazards(radiusKm = 10) {
             const hazards = incidents.filter(item =>
                 ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster'].includes(item.type) &&
                 Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
+                isFreshHazardSignal(item) &&
                 calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= radiusKm
             );
             const unique = new Map();
@@ -1820,8 +1844,28 @@
             );
         }
 
+        function currentRegionalHazards(radiusKm = 50) {
+            return currentNearbyHazards(radiusKm).filter(item => {
+                const distance = calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng));
+                if (distance <= 10 || distance > radiusKm) return false;
+                if (item.type === 'earthquake') {
+                    const magnitude = Number(item.magnitude);
+                    return (Number.isFinite(magnitude) && magnitude >= 4.5) ||
+                        item.felt === true || Number(item.feltCount) > 0 ||
+                        item.tsunamiPotential === true ||
+                        (Number.isFinite(Number(item.mmi)) && Number(item.mmi) >= 4);
+                }
+                if (item.type === 'global_disaster') {
+                    return ['RED', 'ORANGE'].includes(String(item.alertLevel || '').toUpperCase());
+                }
+                return /NASA EONET|PetaBencana/i.test(String(item.sourceName || '')) &&
+                    ['flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster'].includes(item.type);
+            });
+        }
+
         function renderAwarenessOverview() {
             const hazards = currentNearbyHazards(10);
+            const regionalHazards = currentRegionalHazards(50);
             const crimeSignals = incidents.filter(item => item.type === 'crime' &&
                 Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
                 calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= 10);
@@ -1854,22 +1898,32 @@
             const topicSummary = newsCategories.slice(0, 2).map(category => topicLabels[category] || category.replace(/_/g, ' '));
             title.textContent = hazards.length
                 ? 'Nearby hazard signals detected'
-                : crimeSignals.length
-                    ? 'Recorded crime data is available nearby'
-                    : topicSummary.length
-                        ? 'News signals can inform prevention'
-                        : 'No nearby mapped hazard signals';
-            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals || newsCategories.length ? ' attention' : '');
+                : regionalHazards.length
+                    ? 'Regional hazard signals detected'
+                    : crimeSignals.length
+                        ? 'Recorded crime data is available nearby'
+                        : topicSummary.length
+                            ? 'News signals can inform prevention'
+                            : 'No nearby mapped hazard signals';
+            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals || regionalHazards.length || newsCategories.length ? ' attention' : '');
             pill.innerHTML = totalSignals
-                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' mapped signal' : ' mapped signals')
-                : webIntel.length
-                    ? '<i class="fa-solid fa-newspaper"></i> ' + webIntel.length + ' web signals'
-                    : '<i class="fa-solid fa-eye"></i> Monitoring';
+                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' nearby signal' : ' nearby signals')
+                : regionalHazards.length
+                    ? '<i class="fa-solid fa-earth-americas"></i> ' + regionalHazards.length + ' regional'
+                    : webIntel.length
+                        ? '<i class="fa-solid fa-newspaper"></i> ' + webIntel.length + ' web signals'
+                        : '<i class="fa-solid fa-eye"></i> Monitoring';
             if (hazards.length) {
                 const nearest = hazards[0];
                 const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
-                copy.textContent = 'The available feeds contain ' + hazards.length + ' mapped hazard signal(s) within 10 km. Nearest: ' +
+                copy.textContent = hazards.length + ' recent mapped hazard signal(s) are within 10 km. Nearest: ' +
                     (nearest.title || nearest.type) + ' (' + nearestKm.toFixed(1) + ' km). Check its timestamp and original source before acting.';
+            } else if (regionalHazards.length) {
+                const nearest = regionalHazards[0];
+                const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
+                copy.textContent = 'No qualifying mapped signal was found within 10 km, but ' + regionalHazards.length +
+                    ' recent regional hazard signal(s) were found within 50 km. Nearest: ' + (nearest.title || nearest.type) +
+                    ' (' + nearestKm.toFixed(1) + ' km). This is regional context, not a prediction of local impact; check the original source and official advisories.';
             } else if (crimeSignals.length) {
                 copy.textContent = crimeSignals.length + ' historical police-recorded crime item(s) were returned near this point. Locations are approximate and records are not live alerts; review the categories and reporting month below.';
             } else if (newsCategories.length) {
@@ -1879,13 +1933,14 @@
             } else if (webIntel.length) {
                 copy.textContent = webIntel.length + ' web result(s) are available for review. Search results may inform awareness, but are not verified incident records.';
             } else {
-                copy.textContent = 'No mapped hazard signals were found within 10 km in the currently available feeds. Coverage can be incomplete or delayed; this is not a safety guarantee.';
+                copy.textContent = 'No recent mapped hazard signals were found within 10 km in the feeds currently available. Coverage can be incomplete or delayed; this is not a safety guarantee.';
             }
-            const onlineSources = ['bmkg','usgs','gdacs','petabencana','osm'].filter(id => {
+            const onlineSources = ['bmkg','usgs','gdacs','eonet','petabencana','osm'].filter(id => {
                 const node = document.getElementById('status-' + id);
                 return node && node.dataset.state === 'ok';
             }).length;
-            count.textContent = onlineSources + '/5 incident and facility sources responding · ' + webIntel.length + ' web signals';
+            count.textContent = onlineSources + '/6 data feeds responding · ' + hazards.length + ' within 10 km · ' +
+                regionalHazards.length + ' regional · ' + webIntel.length + ' web signals';
 
             const tripNote = document.getElementById('awareness-trip-note');
             const tripCopy = document.getElementById('awareness-trip-copy');
@@ -1951,6 +2006,15 @@
                     : priorityHazard.type === 'flood' ? 'flood'
                     : classifySafetyText(priorityHazard.title + ' ' + priorityHazard.desc);
                 return { category: category, item: priorityHazard, kind: 'mapped', confidence: 'Mapped hazard report' };
+            }
+
+            const regionalHazard = currentRegionalHazards(50)[0];
+            if (regionalHazard) {
+                const category = regionalHazard.type === 'earthquake' ? 'earthquake'
+                    : regionalHazard.type === 'flood' ? 'flood'
+                    : regionalHazard.type === 'fire_event' ? 'fire'
+                    : classifySafetyText(regionalHazard.title + ' ' + regionalHazard.desc);
+                return { category: category, item: regionalHazard, kind: 'regional', confidence: 'Recent regional hazard context' };
             }
 
             const localWebSignals = webIntel.filter(article =>
@@ -2087,7 +2151,9 @@
                     ? getWebSignalRecommendationContext(signal.item)
                     : signal.kind === 'crimeApi'
                         ? 'Police open data contains a recorded crime near this point. UK street-level locations are approximate and the records are historical, not real-time alerts.'
-                        : 'A mapped crime-related report is available. Check the source, timestamp, and precise area before acting.';
+                        : signal.kind === 'regional'
+                            ? 'A recent regional hazard signal is within 50 km. Distance and event magnitude do not predict impact at your exact location; check the linked source and current official advisories.'
+                            : 'A mapped hazard report is available. Check the source, timestamp, and precise area before acting.';
                 if (category === 'gender_based_violence') {
                     tips.push('Use risk studies to inform prevention and access to support; they do not show that every person or place in the area poses a threat.');
                     tips.push('When useful for your situation, choose routes and staffed public places where you feel safe, and share travel plans with a trusted contact.');
@@ -2177,6 +2243,7 @@
             titleNode.textContent = heading;
             tagNode.className = 'personalized-label';
             tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' :
+                signal.kind === 'regional' ? 'REGIONAL CONTEXT' :
                 signal.kind === 'web' ? (signal.item.evidenceType === 'structural-risk' || getWebIntelTimelineBucket(signal.item) === 'risk-context' ? 'RISK CONTEXT' :
                     getWebIntelTimelineBucket(signal.item) === 'undated' ? 'DATE UNCONFIRMED' :
                     getWebIntelTimelineBucket(signal.item).startsWith('history') ? 'HISTORICAL CONTEXT' :
