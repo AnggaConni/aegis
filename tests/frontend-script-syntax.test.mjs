@@ -76,3 +76,11 @@ test('mobile detail panel is compact and reserves layout space rather than float
   assert.match(html, /#incident-detail-panel\[data-selection-state="empty"\] #detail-desc/);
   assert.match(html, /#view-radar\s*\{\s*height:\s*100%;\s*min-height:\s*0;/);
 });
+
+
+test('free-only mode removes the paid news proxy and rejects legacy cached news', () => {
+  assert.doesNotMatch(html, /TINYFISH_PROXY_URL|fetchTinyFishIntel|civilaegis-tinyfish-proxy/);
+  assert.match(html, /webIntel = \[\];/);
+  assert.match(html, /Disabled · free mode/);
+  assert.match(html, /News & OSINT search is disabled in Free Mode/);
+});
