@@ -92,8 +92,8 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
     }]
   ]);
 
-  assert.equal(body.filterVersion, 6);
-  assert.equal(body.buildVersion, 'timeline-v5.1-source-dates');
+  assert.equal(body.filterVersion, 7);
+  assert.equal(body.buildVersion, 'timeline-v5.2-context-dates');
   assert.equal(body.results.length, 0, 'dated historical evidence should remove the undated duplicate');
   assert.equal(body.undatedResults.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
@@ -172,7 +172,7 @@ test('source page metadata separates publication date from incident date and cla
   const eventDate = '2025-08-28T00:00:00.000Z';
   const html = '<!doctype html><html><head>' +
     '<meta property="article:published_time" content="' + publicationDate + '">' +
-    '</head><body><article>The fatal road incident occurred on August 28, 2025. Demonstrations continued in Jakarta.</article></body></html>';
+    '</head><body><article>Demonstrations began on August 15, 2025. The fatal road incident occurred on August 28, 2025. Demonstrations continued in Jakarta.</article></body></html>';
   const body = await runWorker([
     [{
       title: 'Situation remains tense in Jakarta as protests continue',
@@ -221,4 +221,56 @@ test('year-only incident dates are treated as approximate and old years are reje
 
   assert.equal(body.results.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
+});
+
+
+test('known Amnesty reference to the January 2016 Jakarta attack is excluded by its incident date', async () => {
+  const url = 'https://amnesty.org.nz/indonesia-vicious-jakarta-attack-shows-utter-contempt-human-life';
+  const body = await runWorker([
+    [{
+      title: 'Indonesia: Vicious Jakarta attack shows utter contempt for human life',
+      snippet: 'A series of bomb blasts and shootings that rocked Jakarta this morning killed at least seven people.',
+      url
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 0);
+  assert.equal(body.undatedResults.length, 0);
+  assert.equal(body.diagnostics.knownHistoricalDateMatchCount, 1);
+  assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
+});
+
+test('general crime statistics and overview pages are rejected as non-incident references', async () => {
+  const body = await runWorker([
+    [{
+      title: 'CRIME IN INDONESIA',
+      snippet: "Indonesia's murder rate is 8 homicides per 100,000. Jakarta is a remarkably safe city.",
+      url: 'https://factsanddetails.com/indonesia/Government_Military_Crime/sub6_5b/entry-4063.html'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 0);
+  assert.equal(body.undatedResults.length, 0);
+  assert.ok(body.diagnostics.rejectedGenericReferenceCount >= 1);
+});
+
+test('fatality tags recognize plural deaths in protest-related reports', async () => {
+  const body = await runWorker([
+    [{
+      title: 'Indonesia: Authorities must investigate eight deaths following violent crackdown on protests',
+      snippet: 'Deaths from the crackdown on protests in Jakarta and other regions are alarming.',
+      url: 'https://example.com/indonesia-protest-deaths'
+    }],
+    [],
+    []
+  ]);
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].category, 'unrest');
+  assert.ok(body.results[0].incidentTags.includes('unrest'));
+  assert.ok(body.results[0].incidentTags.includes('fatality'));
 });
