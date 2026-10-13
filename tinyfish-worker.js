@@ -202,12 +202,22 @@ function extractEventDate(item, title, snippet, nowMs) {
     return null;
 }
 
-function formatAgeLabel(ageDays, basis, publicationPrecision) {
+function formatAgeLabel(ageDays, basis, publicationParsed, eventParsed) {
     if (!Number.isFinite(ageDays)) return 'Date unconfirmed';
     const days = Math.max(0, ageDays);
-    if (basis === 'event-date') return 'Event date supplied; approximately ' + (days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago' : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago' : (days / 365.2425).toFixed(1) + ' years ago');
-    if (publicationPrecision === 'relative-estimate') return 'Publication age estimated from relative source wording; event date unconfirmed';
-    return 'Article published ' + (days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago' : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago' : (days / 365.2425).toFixed(1) + ' years ago') + '; event date unconfirmed';
+    const ageText = days < 1 ? 'today' : days < 30 ? Math.round(days) + ' days ago'
+        : days < 365.2425 ? Math.round(days / 30.4375) + ' months ago'
+        : (days / 365.2425).toFixed(1) + ' years ago';
+    if (basis === 'event-date') {
+        if (eventParsed && eventParsed.precision === 'relative-estimate') {
+            return 'Event age estimated from relative source wording; verify before relying on it';
+        }
+        return 'Event date in source metadata/text; approximately ' + ageText + ' · verify original report';
+    }
+    if (publicationParsed && publicationParsed.precision === 'relative-estimate') {
+        return 'Article appears published ' + (publicationParsed.relativeLabel || 'at a relative time') + '; event date unconfirmed';
+    }
+    return 'Article published ' + ageText + '; event date unconfirmed';
 }
 
 export default {
@@ -401,7 +411,8 @@ export default {
                     const recencyLabel = formatAgeLabel(
                         timelineAgeDays,
                         timelineBasis,
-                        publicationParsed ? publicationParsed.precision : null
+                        publicationParsed,
+                        eventParsed
                     );
                     gathered.push({
                         id: key,
@@ -450,6 +461,46 @@ export default {
                 else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
                 else if (item.timelineBucket === 'undated') undatedResults.push(item);
             });
+
+            const responseBody = {
+                area: locality,
+                searchArea: locality,
+                radiusType: 'municipality/city/regency',
+                generatedAt: new Date().toISOString(),
+                successfulSearches: successfulSearches,
+                filterVersion: 3,
+                rawResultCount: rawResultCount,
+                diagnostics: diagnostics,
+                recentResults: recentResults.slice(0, 8),
+                mediumTermResults: mediumTermResults.slice(0, 8),
+                longTermResults: longTermResults.slice(0, 8),
+                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
+                undatedResults: undatedResults.slice(0, 8),
+                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
+                note: 'Event date and publication date are tracked separately. If only publication date is available, the timeline bucket describes when the article was published, not when the incident happened. City mention is not precise geolocation. TinyFish results are unverified search leads; review the original source before making safety decisions.'
+            };
+
+            if (!successfulSearches) {
+                return jsonResponse({
+                    error: 'TinyFish Search did not return successful time-window searches',
+                    area: locality,
+                    results: [],
+                    recentResults: [],
+                    historicalResults: [],
+                    successfulSearches: 0,
+                    filterVersion: 3,
+                    diagnostics: diagnostics
+                }, 502, corsOrigin);
+            }
+
+            try {
+                const cacheResponse = new Response(JSON.stringify(responseBody), {
+                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
+                });
+                ctx.waitUntil(cache.put(cacheKey, cacheResponse));
+            } catch (_) {
+                // Search remains useful if edge caching is unavailable.
+            }
             return jsonResponse(responseBody, 200, corsOrigin);
         } catch (_) {
             return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
