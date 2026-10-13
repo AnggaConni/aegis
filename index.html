@@ -2622,7 +2622,7 @@
                     setRouteStatus('Route calculated and saved on this device. You can reopen it without signal.', 'ok');
                 }
 
-                fetchexternal news searchIntel(destination.lat, destination.lng, routeDestinationLabel, true);
+                // Local-news search is intentionally disabled in Free Mode.
             } catch (error) {
                 console.warn('Route calculation failed:', error);
                 const returnIncomplete = journeyMode === 'roundtrip' && journeyPlan &&
