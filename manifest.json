@@ -1,0 +1,21 @@
+{
+  "id": "./",
+  "name": "CivilAegis Personal Safety Radar",
+  "short_name": "CivilAegis",
+  "description": "Personal safety radar with saved one-way and round-trip journeys, turn instructions, and nearby hazard reports.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "categories": ["travel", "navigation", "safety"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
