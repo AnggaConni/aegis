@@ -92,8 +92,8 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
     }]
   ]);
 
-  assert.equal(body.filterVersion, 8);
-  assert.equal(body.buildVersion, 'timeline-v5.2.1-context-dates');
+  assert.equal(body.filterVersion, 9);
+  assert.equal(body.buildVersion, 'timeline-v5.2.2-history-precedence');
   assert.equal(body.results.length, 0, 'dated historical evidence should remove the undated duplicate');
   assert.equal(body.undatedResults.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
