@@ -33,8 +33,7 @@ function extractResults(payload) {
 
 function getLocality(address, fallback) {
     address = address || {};
-    // Prefer municipality/city/regency fields. Do not search by village, suburb,
-    // neighbourhood, or district because that makes local awareness too narrow.
+    // Prefer city/regency fields; never fall back to village/suburb/district.
     const municipality = address.city || address.town || address.municipality ||
         address.county || address.city_municipality || address.state_district || '';
     const region = address.state || address.province || '';
@@ -44,6 +43,47 @@ function getLocality(address, fallback) {
         if (unique.indexOf(value) < 0) unique.push(value);
     });
     return unique.length > 1 ? unique.join(', ') : (municipality || region || fallback) + ', Indonesia';
+}
+
+function normalizeForMatching(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function getLocalitySearchTerms(locality) {
+    const ignored = new Set(['indonesia', 'province', 'provinsi', 'java', 'jawa', 'west', 'east', 'central', 'barat', 'timur', 'tengah', 'utara', 'selatan']);
+    const terms = [];
+    const add = function (value) {
+        const normalized = normalizeForMatching(value);
+        if (normalized.length < 3 || ignored.has(normalized) || terms.indexOf(normalized) >= 0) return;
+        terms.push(normalized);
+    };
+    const firstPart = String(locality || '').split(',')[0].trim();
+    add(firstPart);
+    const municipality = firstPart
+        .replace(/^daerah khusus ibukota\s+/i, '')
+        .replace(/^daerah istimewa\s+/i, '')
+        .replace(/^(kota administrasi|kabupaten administrasi|kota|kabupaten|regency|municipality|city of|city|kab\.?|kot\.?|dki)\s+/i, '')
+        .trim();
+    add(municipality);
+    municipality.split(/\s+/).filter(part => part.length >= 4 && !ignored.has(part)).forEach(add);
+    return terms;
+}
+
+function isLocalIncidentResult(item, localityTerms) {
+    const title = String(item.title || item.name || '');
+    const snippet = String(item.snippet || item.description || item.content || '');
+    const url = String(item.url || item.link || item.href || '');
+    const combined = normalizeForMatching(title + ' ' + snippet + ' ' + url);
+    if (!localityTerms.length) return false;
+    const mentionsLocality = localityTerms.some(term => combined.includes(term));
+    if (!mentionsLocality) return false;
+
+    // Filter general foreign crime-statistics/reference pages even if a broad query surfaced them.
+    const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(title + ' ' + snippet + ' ' + url);
+    const foreignGenericDomains = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
+    if (genericReference || foreignGenericDomains) return false;
+    return true;
 }
 
 export default {
@@ -82,7 +122,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v2?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -116,8 +156,8 @@ export default {
             // Keep rounded coordinates as a broad-area fallback.
         }
 
-        const baseQuery = 'publicly reported crime, violence, murder, homicide, sexual assault, rape, sexual harassment, riots, mob violence, fatal clashes, deaths during unrest, pickpocketing, bag snatching, robbery, phone theft, scams, fraud, card skimming, road accidents, traffic crashes, flooding, fires and other public-safety incidents in ' +
-            locality + '. Include dates, approximate city/regency/municipality, source links, official statements where available, and reported injuries or fatalities. Prefer police, courts, local government, emergency services, reputable local newsrooms and established national media. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
+        const localityTerms = getLocalitySearchTerms(locality);
+        const baseQuery = 'Find specific public-safety incidents that explicitly happened in ' + locality + ' in Indonesia. Search Indonesian and English-language local reporting using terms including pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, riot, fatal clash, pickpocketing, robbery, scam, card fraud and road accident. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Only return articles that explicitly mention ' + locality + ' or its municipality name and describe an incident in that locality. Do not return generic crime-statistics pages, research/reference pages, incidents in other countries, or national/global trends not tied to the searched city. Include source links, dates, reported location and status when available. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not infer a specific person or address is involved, and do not invent events.';
         const timeWindows = [
             { label: 'recent-30-days', query: 'published or occurred within the last 30 days', maxAgeDays: 30 },
             { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago', maxAgeDays: 730 },
@@ -128,6 +168,8 @@ export default {
             const gathered = [];
             const seen = new Set();
             let successfulSearches = 0;
+            let rawResultCount = 0;
+            let rejectedNonLocalCount = 0;
             for (const window of timeWindows) {
                 const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
                     '. This is the ' + window.label + ' window. Return publication/event date when available.';
@@ -139,9 +181,15 @@ export default {
                 if (!searchResponse.ok) continue;
                 successfulSearches += 1;
                 const payload = await searchResponse.json();
-                extractResults(payload).forEach(function (item) {
+                const rawRows = extractResults(payload);
+                rawResultCount += rawRows.length;
+                rawRows.forEach(function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
                     if (!/^https?:\/\//i.test(targetUrl)) return;
+                    if (!isLocalIncidentResult(item, localityTerms)) {
+                        rejectedNonLocalCount += 1;
+                        return;
+                    }
                     const key = targetUrl.toLowerCase();
                     if (seen.has(key)) return;
 
@@ -202,13 +250,15 @@ export default {
             const responseBody = {
                 area: locality, radiusType: 'municipality/city/regency',
                 generatedAt: new Date().toISOString(), successfulSearches: successfulSearches,
+                filterVersion: 2, rawResultCount: rawResultCount,
+                rejectedNonLocalCount: rejectedNonLocalCount,
                 recentResults: recentResults.slice(0, 8),
                 mediumTermResults: mediumTermResults.slice(0, 8),
                 longTermResults: longTermResults.slice(0, 8),
                 historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
                 undatedResults: undatedResults.slice(0, 8),
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'TinyFish search/media leads are not independently verified and are not precisely geolocated. Publication dates may differ from incident dates. Verify original sources; historical reports do not imply current danger.'
+                note: 'Only results mentioning the searched city are retained; generic foreign crime-statistics pages are filtered out. TinyFish search/media leads are not independently verified and are not precisely geolocated. Publication dates may differ from incident dates. Verify original sources; historical reports do not imply current danger.'
             };
             if (!successfulSearches) {
                 return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], recentResults: [], historicalResults: [], successfulSearches: 0 }, 502, corsOrigin);
