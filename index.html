@@ -1206,6 +1206,9 @@
                     eventLocationStatus: String(row.eventLocationStatus || 'The event location is unconfirmed.'),
                     locationEvidence: String(row.locationEvidence || ''),
                     category: String(row.category || classifySafetyText(String(row.title || '') + ' ' + String(row.snippet || ''))),
+                    incidentTags: Array.isArray(row.incidentTags) ? row.incidentTags.map(tag => String(tag)).slice(0, 8) : [],
+                    dateEnrichmentSource: String(row.dateEnrichmentSource || 'search-result-only'),
+                    originalSourceChecked: row.originalSourceChecked === true,
                     verified: false
                 })).filter(row => row.url);
                 webIntel = append
