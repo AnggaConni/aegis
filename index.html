@@ -432,6 +432,136 @@
         const SAFETY_SNAPSHOT_KEY = 'civilAegisSafetySnapshotV1';
         const JOURNEY_PLAN_KEY = 'civilAegisJourneyPlanV1';
 
+        function readStoredJson(key, fallbackValue) {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : fallbackValue;
+            } catch (error) {
+                console.warn('Could not read local data:', key, error);
+                return fallbackValue;
+            }
+        }
+
+        function writeStoredJson(key, value) {
+            try {
+                localStorage.setItem(key, JSON.stringify(value));
+                return true;
+            } catch (error) {
+                console.warn('Could not persist local data:', key, error);
+                return false;
+            }
+        }
+
+        function saveSafetySnapshot() {
+            const snapshot = {
+                savedAt: new Date().toISOString(),
+                incidents: incidents.slice(0, 800),
+                routeHazardCandidates: routeHazardCandidates.slice(0, 4000),
+                webIntel: webIntel.slice(-40)
+            };
+            if (writeStoredJson(SAFETY_SNAPSHOT_KEY, snapshot)) {
+                cachedSafetySnapshotAt = snapshot.savedAt;
+                return true;
+            }
+            return false;
+        }
+
+        function saveJourneyPlan() {
+            if (!routePlanOrigin || !routeDestination || !routeOptions.length) return false;
+            const routesForPlan = journeyPlan && journeyPlan.routes ? journeyPlan.routes : {};
+            routesForPlan[activeJourneyLeg] = routeOptions;
+            journeyPlan = {
+                version: 1,
+                mode: journeyMode,
+                origin: { lat: Number(routePlanOrigin.lat), lng: Number(routePlanOrigin.lng) },
+                destination: { lat: Number(routeDestination.lat), lng: Number(routeDestination.lng) },
+                destinationLabel: routeDestinationLabel,
+                activeLeg: activeJourneyLeg,
+                routes: routesForPlan,
+                savedAt: new Date().toISOString(),
+                alertRadiusMeters: routeBufferMeters
+            };
+            const saved = writeStoredJson(JOURNEY_PLAN_KEY, journeyPlan);
+            updateOfflinePlanNote();
+            return saved;
+        }
+
+        function restoreLocalSafetyState() {
+            const snapshot = readStoredJson(SAFETY_SNAPSHOT_KEY, null);
+            if (snapshot && Array.isArray(snapshot.incidents)) {
+                cachedSafetySnapshotAt = snapshot.savedAt || null;
+                incidents = snapshot.incidents.map(item => ({ ...item, cachedLocal: true }));
+                routeHazardCandidates = Array.isArray(snapshot.routeHazardCandidates)
+                    ? snapshot.routeHazardCandidates.map(item => ({ ...item, cachedLocal: true }))
+                    : incidents.slice();
+                webIntel = Array.isArray(snapshot.webIntel) ? snapshot.webIntel : [];
+            }
+            const savedPlan = readStoredJson(JOURNEY_PLAN_KEY, null);
+            if (savedPlan && savedPlan.origin && savedPlan.destination && savedPlan.routes) {
+                journeyPlan = savedPlan;
+                journeyMode = savedPlan.mode === 'roundtrip' ? 'roundtrip' : 'oneway';
+                activeJourneyLeg = savedPlan.activeLeg === 'return' ? 'return' : 'outbound';
+                routePlanOrigin = savedPlan.origin;
+                routeDestination = savedPlan.destination;
+                routeDestinationLabel = savedPlan.destinationLabel || 'Saved destination';
+                routeBufferMeters = Number(savedPlan.alertRadiusMeters) || 1000;
+                routeOptions = Array.isArray(savedPlan.routes[activeJourneyLeg]) ? savedPlan.routes[activeJourneyLeg] : [];
+                if (!routeOptions.length && activeJourneyLeg === 'return' && Array.isArray(savedPlan.routes.outbound)) {
+                    routeOptions = [];
+                }
+                selectedRouteIndex = Math.min(Number(savedPlan.selectedRouteIndex) || 0, Math.max(0, routeOptions.length - 1));
+            }
+            updateJourneyControls();
+            updateOfflinePlanNote();
+        }
+
+        function updateJourneyControls() {
+            const oneWay = document.getElementById('mode-oneway');
+            const roundTrip = document.getElementById('mode-roundtrip');
+            const legControls = document.getElementById('journey-leg-controls');
+            if (oneWay) oneWay.classList.toggle('active', journeyMode === 'oneway');
+            if (roundTrip) roundTrip.classList.toggle('active', journeyMode === 'roundtrip');
+            if (legControls) legControls.classList.toggle('hidden', journeyMode !== 'roundtrip');
+            const outbound = document.getElementById('leg-outbound');
+            const returning = document.getElementById('leg-return');
+            if (outbound) outbound.classList.toggle('active', activeJourneyLeg === 'outbound');
+            if (returning) returning.classList.toggle('active', activeJourneyLeg === 'return');
+            const note = document.getElementById('offline-plan-note');
+            if (note) note.classList.toggle('stale', !navigator.onLine);
+        }
+
+        function updateOfflinePlanNote() {
+            const note = document.getElementById('offline-plan-note');
+            if (!note) return;
+            const hasPlan = !!(journeyPlan && journeyPlan.routes && Object.values(journeyPlan.routes).some(value => Array.isArray(value) && value.length));
+            note.classList.toggle('hidden', !hasPlan);
+            if (!hasPlan) return;
+            note.classList.toggle('stale', !navigator.onLine);
+            const stamp = journeyPlan.savedAt ? new Date(journeyPlan.savedAt) : null;
+            const age = stamp && !Number.isNaN(stamp.getTime()) ? ' Saved ' + stamp.toLocaleString() + '.' : '';
+            note.innerHTML = !navigator.onLine
+                ? '<i class="fa-solid fa-wifi-slash mr-1"></i>Offline mode. Saved trip and turn steps are available locally; live hazards cannot refresh.' + age
+                : '<i class="fa-solid fa-floppy-disk mr-1"></i>Trip plan saved on this device. Return leg and steps can be reopened without signal.' + age;
+        }
+
+        async function registerOfflineApp() {
+            if (!('serviceWorker' in navigator)) return;
+            try {
+                await navigator.serviceWorker.register('./sw.js');
+            } catch (error) {
+                console.warn('Offline app shell could not be registered:', error);
+            }
+        }
+
+        function updateNetworkIndicator() {
+            updateOfflinePlanNote();
+            const status = document.getElementById('route-status');
+            if (!navigator.onLine && status) {
+                status.textContent = 'Offline: showing saved route/report data. New alerts and live routing cannot be fetched.';
+                status.style.color = '#92400e';
+            }
+        }
+
         function updateSourceStatus(sourceId, label, state = 'neutral') {
             const node = document.getElementById('status-' + sourceId);
             if (!node) return;
@@ -491,6 +621,9 @@
             initApp();
             updateSavedBadge();
             registerOfflineApp();
+            window.addEventListener('online', updateNetworkIndicator);
+            window.addEventListener('offline', updateNetworkIndicator);
+            updateNetworkIndicator();
         });
 
         function initApp() {
@@ -502,8 +635,11 @@
                         setupMapAndData();
                     },
                     error => {
-                        console.warn('GPS denied/failed; map will use a Jakarta fallback. Route planning is disabled until GPS is available.', error);
+                        console.warn('GPS denied/failed; route planning is paused and locally saved plans remain available.', error);
                         usingFallbackLocation = true;
+                        if (journeyPlan && journeyPlan.origin) {
+                            userLocation = { lat: journeyPlan.origin.lat, lng: journeyPlan.origin.lng };
+                        }
                         setupMapAndData();
                     },
                     { enableHighAccuracy: true, timeout: 10000 }
@@ -514,22 +650,33 @@
         }
 
         async function setupMapAndData() {
-            document.getElementById('loading-text').innerText = 'Loading BMKG, disaster reports, earthquakes, and emergency facilities...';
-            await fetchRealData(userLocation.lat, userLocation.lng);
-
+            document.getElementById('loading-text').innerText = 'Opening local safety data and preparing public feeds…';
             document.getElementById('gps-status').innerHTML = usingFallbackLocation
-                ? '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span><span class="text-amber-700 font-semibold text-xs">Default Jakarta · GPS unavailable</span>'
+                ? '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span><span class="text-amber-700 font-semibold text-xs">GPS unavailable · last-known plan only</span>'
                 : '<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span><span class="text-green-600 font-semibold text-xs">GPS Active</span>';
 
             initMap();
-            renderFeed('all');
+            renderMapMarkers();
+            renderFeed(activeFeedFilter || 'all');
             renderSaved();
-            renderRadarSidebar('all');
-
+            renderRadarSidebar(activeRadarFilter || 'all');
             document.getElementById('loading-overlay').classList.add('hidden');
             requestAnimationFrame(() => map.invalidateSize());
-            // Optional TinyFish results go through a proxy and are not assumed to have exact coordinates.
-            fetchTinyFishIntel(userLocation.lat, userLocation.lng);
+
+            if (journeyPlan && journeyPlan.routes) {
+                document.getElementById('route-destination').value = routeDestinationLabel || '';
+                document.getElementById('route-alert-radius').value = String(routeBufferMeters);
+                updateJourneyControls();
+                updateOfflinePlanNote();
+                if (routeOptions.length) {
+                    applyRouteOption(selectedRouteIndex, true);
+                    setRouteStatus(navigator.onLine
+                        ? 'Loaded saved trip plan. Refresh public feeds before departure.'
+                        : 'Offline: loaded saved trip route and turn instructions. Live hazard checks are unavailable.', navigator.onLine ? 'ok' : 'warning');
+                }
+            }
+            // Refresh in the background so an offline visit does not sit on a loading screen.
+            refreshSafetyFeeds();
         }
 
         async function refreshSafetyFeeds() {
@@ -568,6 +715,47 @@
 
         // --- REAL API DATA FETCHING ---
         // --- REAL API DATA FETCHING ---
+        function mergeUnavailableCachedFeeds() {
+            const snapshot = readStoredJson(SAFETY_SNAPSHOT_KEY, null);
+            if (!snapshot || !Array.isArray(snapshot.incidents)) return;
+            const sourceToStatus = [
+                [/BMKG/i, 'bmkg'],
+                [/USGS/i, 'usgs'],
+                [/PetaBencana/i, 'petabencana'],
+                [/GDACS/i, 'gdacs'],
+                [/OpenStreetMap/i, 'osm']
+            ];
+            const isSourceUnavailable = item => {
+                const text = String(item.sourceName || '');
+                const mapping = sourceToStatus.find(entry => entry[0].test(text));
+                const node = mapping ? document.getElementById('status-' + mapping[1]) : null;
+                return !navigator.onLine || (node && node.dataset.state === 'error');
+            };
+            const addCached = (item, isRouteCandidate) => {
+                if (!item || !isSourceUnavailable(item)) return;
+                const id = String(item.id || '');
+                const duplicate = (isRouteCandidate ? routeHazardCandidates : incidents).some(existing => String(existing.id) === id);
+                if (duplicate) return;
+                const copy = { ...item, cachedLocal: true, cacheSnapshotAt: snapshot.savedAt || null };
+                copy.dist = calculateDistance(userLocation.lat, userLocation.lng, Number(copy.lat), Number(copy.lng));
+                if (isRouteCandidate) routeHazardCandidates.push(copy);
+                if (isRouteCandidate && !['earthquake','flood','fire_event','volcano','haze','wind','disaster','global_disaster'].includes(copy.type)) return;
+                if (!isRouteCandidate && copy.dist > 250) return;
+                incidents.push(copy);
+            };
+            (snapshot.routeHazardCandidates || []).forEach(item => addCached(item, true));
+            snapshot.incidents.forEach(item => addCached(item, false));
+            if (!webIntel.length && Array.isArray(snapshot.webIntel)) webIntel = snapshot.webIntel;
+            Object.keys({ bmkg: 1, usgs: 1, petabencana: 1, gdacs: 1, osm: 1 }).forEach(source => {
+                const node = document.getElementById('status-' + source);
+                if (node && node.dataset.state === 'error' && !navigator.onLine) {
+                    node.textContent = 'Offline · cached reports';
+                    node.dataset.state = 'neutral';
+                    node.className = 'source-state neutral';
+                }
+            });
+        }
+
         async function fetchRealData(lat, lng) {
             incidents = [];
             ['bmkg', 'petabencana', 'usgs', 'gdacs', 'osm'].forEach(id => updateSourceStatus(id, 'Checking…', 'neutral'));
@@ -813,7 +1001,10 @@
             ];
 
             await Promise.allSettled(tasks);
+            mergeUnavailableCachedFeeds();
             incidents.sort((a, b) => a.dist - b.dist);
+            saveSafetySnapshot();
+            if (!navigator.onLine) updateSourceStatus('osm', 'Offline · cached data', 'neutral');
         }
 
         async function fetchTinyFishIntel(lat, lng, localityLabel, append = false) {
