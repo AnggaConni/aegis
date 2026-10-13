@@ -129,8 +129,12 @@ function assessIncidentLocation(item, localityTerms) {
 
     const allText = title + ' ' + snippet + ' ' + url;
     const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(allText);
+    const genericCrimeOverview = /(crime in indonesia|crime overview|crime rate|murder rate|homicide rate|homicides? per 100,?000|criminality statistics|crime index|crime data by country|jakarta is (?:a )?(?:remarkably )?safe city|indonesia's murder rate)/i.test(title + ' ' + snippet);
+    const specificIncidentSignal = /\b(arrest(?:ed|s)?|detain(?:ed|s)?|occurred|happened|took place|attacked|assaulted|was killed|were killed|died|dead after|fatal clash|bomb blasts?|explosions?|robbed|stole|was raped|was stabbed|tewas|menewaskan|ditangkap|terjadi|dianiaya|dibunuh|dibacok|dirampok|kecelakaan)\b/i.test(title + ' ' + snippet);
     const foreignGenericDomain = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
-    if (genericReference || foreignGenericDomain) return { accepted: false, reason: 'generic-or-foreign-reference' };
+    if (genericReference || foreignGenericDomain || (genericCrimeOverview && !specificIncidentSignal)) {
+        return { accepted: false, reason: 'generic-or-foreign-reference' };
+    }
 
     const nationalScale = /(nationwide|across indonesia|throughout indonesia|across the country|across the archipelago|several provinces|multiple provinces|multiple cities|nationwide unrest|nationwide protests|di seluruh indonesia|lintas provinsi|sejumlah daerah|berbagai daerah|kerusuhan nasional)/i.test(allText);
     const city = localityTerms.find(term => !term.startsWith('daerah khusus ibukota')) || matchedTerm;
@@ -475,7 +479,32 @@ function extractCandidateOriginalUrls(text, sourceUrl) {
     return candidates.slice(0, 2);
 }
 
-function readSourceDateSignals(html, nowMs) {
+function extractContextualEventDateFromSource(title, snippet, bodyText, nowMs) {
+    const focus = normalize(String(title || '') + ' ' + String(snippet || ''));
+    const fatalFocus = /\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|menewaskan|korban tewas|meninggal|tewas)\b/.test(focus);
+    const explosionFocus = /\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(focus);
+    const sexualFocus = /\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(focus);
+    const theftFocus = /\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan)\b/.test(focus);
+    const accidentFocus = /\b(road incident|traffic accident|crash|run over|collision|kecelakaan|tabrakan)\b/.test(focus);
+    const eventCue = /\b(occurred|happened|took place|was killed|were killed|died|was run over|were run over|was attacked|were attacked|was shot|were shot|was stabbed|were stabbed|was raped|was robbed|was assaulted|terjadi|tewas|meninggal|menewaskan|dibunuh|ditabrak|diserang|ditembak|dibacok)\b/i;
+
+    const sentences = String(bodyText || '').split(/(?<=[.!?])\s+/).slice(0, 260);
+    for (const sentence of sentences) {
+        if (!/\b(?:19|20)\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember)\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b/i.test(sentence)) continue;
+        if (!eventCue.test(sentence)) continue;
+        const normalizedSentence = normalize(sentence);
+        if (fatalFocus && !/\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|victim|run over|menewaskan|korban tewas|meninggal|tewas|dibunuh|ditabrak)\b/.test(normalizedSentence)) continue;
+        if (explosionFocus && !/\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(normalizedSentence)) continue;
+        if (sexualFocus && !/\b(rape|sexual assault|sexual violence|pemerkosaan|perkosaan|kekerasan seksual)\b/.test(normalizedSentence)) continue;
+        if (theftFocus && !/\b(robbery|robberies|theft|snatch|begal|pencurian|penjambretan|perampokan|stole|stolen|robbed)\b/.test(normalizedSentence)) continue;
+        if (accidentFocus && !/\b(road incident|traffic accident|crash|run over|collision|kecelakaan|tabrakan|vehicle)\b/.test(normalizedSentence)) continue;
+        const parsed = extractEventDate({}, title, sentence, nowMs);
+        if (parsed) return { ...parsed, status: 'event-date-context-matched-in-original-source' };
+    }
+    return null;
+}
+
+function readSourceDateSignals(html, nowMs, title, snippet) {
     const jsonLd = collectJsonLdSignals(html);
     const publicationRaw = extractMetaValue(html, [
         'article:published_time', 'og:published_time', 'datepublished',
@@ -489,13 +518,38 @@ function readSourceDateSignals(html, nowMs) {
     const readableText = htmlToReadableText(html);
     const publicationParsed = publicationRaw ? parseDateValue(publicationRaw, nowMs) : null;
     const explicitEventParsed = eventRaw ? parseDateValue(eventRaw, nowMs) : null;
-    const eventParsed = explicitEventParsed || extractEventDate({}, '', readableText, nowMs);
+    const timeTag = (String(html || '').match(/<time\b[^>]*datetime\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/i) || []);
+    const timeTagParsed = !publicationParsed && (timeTag[1] || timeTag[2]) ? parseDateValue(timeTag[1] || timeTag[2], nowMs) : null;
+    const effectivePublication = publicationParsed || timeTagParsed;
+    const eventParsed = explicitEventParsed || extractEventDateFromSourceText(title, snippet, readableText, nowMs);
+
     return {
         publicationRaw: publicationRaw || null,
-        publicationParsed: publicationParsed,
+        publicationParsed: effectivePublication,
         eventParsed: eventParsed,
         readableText: readableText
     };
+}
+
+function knownHistoricalIncidentDate(title, snippet, url, nowMs) {
+    const normalizedTitle = normalize(title);
+    const normalizedSnippet = normalize(snippet);
+    const normalizedUrl = normalize(url);
+
+    const amnestyJakarta2016 =
+        /vicious jakarta attack shows utter contempt for human life/.test(normalizedTitle) ||
+        /vicious jakarta attack shows utter contempt for human life/.test(normalizedUrl) ||
+        (/amnesty\.org\.nz/.test(url) && /jakarta/.test(normalizedTitle) &&
+            /bomb blasts|bombings|shootings/.test(normalizedSnippet));
+    const cnnJakarta2016 =
+        /jakarta at least 4 people dead after blasts/.test(normalizedTitle) ||
+        (/facebook\.com\/cnn\/videos\/jakarta/.test(url) && /blasts|explosions/.test(normalizedTitle + ' ' + normalizedSnippet));
+
+    if (amnestyJakarta2016 || cnnJakarta2016) {
+        const parsed = parseDateValue('2016-01-14', nowMs);
+        if (parsed) return { ...parsed, precision: 'absolute-date', status: 'known-historical-incident-reference' };
+    }
+    return null;
 }
 
 async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, diagnostics) {
@@ -504,8 +558,20 @@ async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, di
     let eventParsed = extractEventDate(item, title, snippet, nowMs);
     let enriched = false;
     let checked = false;
+    const knownHistorical = knownHistoricalIncidentDate(title, snippet, item.url || item.link || item.href || '', nowMs);
+    if (!eventParsed && knownHistorical) {
+        diagnostics.knownHistoricalDateMatchCount += 1;
+        return {
+            publicationRaw: publicationRaw,
+            publicationParsed: publicationParsed,
+            eventParsed: knownHistorical,
+            enriched: true,
+            checked: false,
+            sourceKind: 'known-historical-incident-reference'
+        };
+    }
     if (eventParsed && publicationParsed && ['absolute-date', 'absolute-timestamp'].includes(publicationParsed.precision)) {
-        return { publicationRaw: publicationRaw, publicationParsed: publicationParsed, eventParsed: eventParsed, enriched: false, checked: false };
+        return { publicationRaw: publicationRaw, publicationParsed: publicationParsed, eventParsed: eventParsed, enriched: false, checked: false, sourceKind: 'search-result-only' };
     }
 
     const originalUrls = extractCandidateOriginalUrls(snippet, item.url || item.link || item.href || '');
@@ -530,7 +596,7 @@ async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, di
             continue;
         }
         diagnostics.originalSourcePageReadCount += 1;
-        const signals = readSourceDateSignals(page.html, nowMs);
+        const signals = readSourceDateSignals(page.html, nowMs, title, snippet);
         if (!publicationParsed || ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(publicationParsed.precision)) {
             if (signals.publicationParsed && ['absolute-date', 'absolute-timestamp'].includes(signals.publicationParsed.precision)) {
                 publicationParsed = signals.publicationParsed;
@@ -553,7 +619,8 @@ async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, di
         publicationParsed: publicationParsed,
         eventParsed: eventParsed,
         enriched: enriched,
-        checked: checked
+        checked: checked,
+        sourceKind: enriched ? 'original-source-metadata-or-body' : 'search-result-only'
     };
 }
 
@@ -562,7 +629,7 @@ function classifyIncident(title, snippet) {
     const hasExplosion = /\b(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)\b/.test(text);
     const hasSexualViolence = /\b(rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan)\b/.test(text);
     const hasUnrest = /\b(riot|unrest|mob violence|clash|clashes|communal violence|protest|protests|demonstration|demonstrations|tawuran|bentrokan|bentrok|ricuh|kerusuhan|unjuk rasa|demonstrasi)\b/.test(text);
-    const hasFatality = /\b(murder|homicide|killed|dead after|people dead|fatal|deadly|died after|victim died|death toll|people were killed|run over|struck and killed|pembunuhan|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal)\b/.test(text);
+    const hasFatality = /\b(murder|homicide|deaths?|fatalities|killed|was killed|were killed|people dead|fatal|deadly|died|died after|victim died|death toll|people were killed|run over|struck and killed|eight deaths|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal|kematian|korban meninggal dunia)\b/.test(text);
     const hasFatalAssault = /\b(fatal assault|fatal attack|fatal stabbing|fatal shooting|deadly assault|died after (?:an? )?assault|assault incident.*(?:died|fatal|death)|serangan fatal|meninggal setelah dianiaya)\b/.test(text);
     const hasTheft = /\b(pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)\b/.test(text);
     const hasFraud = /\b(scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online)\b/.test(text);
@@ -686,7 +753,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v7?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v8?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -741,7 +808,8 @@ export default {
                 originalSourceFetchCount: 0,
                 originalSourceFetchFailedCount: 0,
                 originalSourcePageReadCount: 0,
-                originalSourceDateEnrichedCount: 0
+                originalSourceDateEnrichedCount: 0,
+                knownHistoricalDateMatchCount: 0
             };
             const nowMs = Date.now();
 
@@ -879,7 +947,7 @@ export default {
                         dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
                         category: category,
                         incidentTags: classified.incidentTags,
-                        dateEnrichmentSource: enrichedDates.enriched ? 'original-source-metadata-or-body' : 'search-result-only',
+                        dateEnrichmentSource: enrichedDates.sourceKind || (enrichedDates.enriched ? 'original-source-metadata-or-body' : 'search-result-only'),
                         originalSourceChecked: enrichedDates.checked,
                         eventLocation: explicitLocation ? String(explicitLocation) : null,
                         eventLocationScope: location.scope,
@@ -938,8 +1006,8 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 6,
-                buildVersion: 'timeline-v5.1-source-dates',
+                filterVersion: 7,
+                buildVersion: 'timeline-v5.2-context-dates',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults.slice(0, 8),
@@ -947,10 +1015,10 @@ export default {
                 longTermResults: longTermResults.slice(0, 8),
                 undatedResults: undatedResults.slice(0, 8),
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event and publication dates are kept separate. When needed, CivilAegis reads a limited number of public source pages for metadata and incident-date context; date enrichment is best-effort and source text is not independently verified. searchPass/searchWindow identify the query pass only, not the incident or publication date. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
+                note: 'Event and publication dates are kept separate. Dates extracted from article text must match the incident context described by the search result; unrelated dates in a broader timeline are not treated as event dates. A small set of known historical references is date-matched explicitly. Source-page enrichment is best-effort and source text is not independently verified. searchPass/searchWindow identify the query pass only, not the incident or publication date. Statistical/reference pages are filtered separately from specific incident reports. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 6, buildVersion: 'timeline-v5.1-source-dates', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 7, buildVersion: 'timeline-v5.2-context-dates', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
