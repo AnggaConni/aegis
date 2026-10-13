@@ -35,6 +35,58 @@ function normalize(value) {
         .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function canonicalizeSourceUrl(raw) {
+    try {
+        const parsed = new URL(raw);
+        let host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+        parsed.hash = '';
+
+        // Normalize common video URL variants without lowercasing case-sensitive video IDs.
+        if (host === 'youtu.be') {
+            const videoId = parsed.pathname.split('/').filter(Boolean)[0];
+            if (videoId) return 'youtube.com/watch?v=' + videoId;
+        }
+        if ((host === 'youtube.com' || host === 'm.youtube.com') && parsed.pathname === '/watch' && parsed.searchParams.get('v')) {
+            return 'youtube.com/watch?v=' + parsed.searchParams.get('v');
+        }
+
+        const trackingParams = /^(utm_.+|fbclid|gclid|dclid|mc_cid|mc_eid|ref_src|ref_url)$/i;
+        for (const key of Array.from(parsed.searchParams.keys())) {
+            if (trackingParams.test(key)) parsed.searchParams.delete(key);
+        }
+        const params = Array.from(parsed.searchParams.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+        const query = new URLSearchParams();
+        params.forEach(([key, value]) => query.append(key, value));
+        const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+        return host + pathname + (query.toString() ? '?' + query.toString() : '');
+    } catch (_) {
+        return String(raw || '').trim();
+    }
+}
+
+function makeContentFingerprint(title, snippet) {
+    const normalizedTitle = normalize(title);
+    const normalizedSnippet = normalize(snippet);
+    if (normalizedTitle.length < 12 || normalizedSnippet.length < 24) return '';
+    return normalizedTitle.slice(0, 180) + '|' + normalizedSnippet.slice(0, 220);
+}
+
+function resultQualityScore(result) {
+    let score = 0;
+    if (result.eventDate) {
+        score += ['absolute-date', 'absolute-timestamp'].includes(result.eventDatePrecision) ? 8
+            : result.eventDatePrecision === 'relative-estimate' ? 5 : 4;
+    }
+    if (result.publishedAt || result.publishedAtRaw) {
+        score += ['absolute-date', 'absolute-timestamp'].includes(result.publicationDatePrecision) ? 4
+            : result.publishedAtRaw ? 2 : 1;
+    }
+    if (result.eventLocation) score += 1;
+    if (/\.(?:gov|mil)(?:\.|$)|(?:^|\.)go\.id$|polri\.go\.id$/i.test(result.source || '')) score += 0.5;
+    return score;
+}
+
 function getLocality(address, fallback) {
     address = address || {};
     const municipality = address.city || address.town || address.municipality ||
@@ -147,8 +199,11 @@ function parseDateValue(value, nowMs) {
 
     const yearOnly = raw.match(/^(19|20)\d{2}$/);
     if (yearOnly) {
-        const yearMs = Date.UTC(Number(raw), 0, 1);
-        return { iso: new Date(yearMs).toISOString(), dateMs: yearMs, precision: 'year-only-estimate', raw: raw };
+        const yearMs = Date.UTC(Number(raw), 6, 1);
+        if (yearMs <= now + DAY_MS) {
+            return { iso: new Date(yearMs).toISOString(), dateMs: yearMs, precision: 'year-only-estimate', raw: raw };
+        }
+        return null;
     }
     const isoMonthOnly = raw.match(/^(19|20)\d{2}-(0[1-9]|1[0-2])$/);
     const monthYear = raw.match(new RegExp('^(' + monthAlternation + ')\\s+(\\d{4})$', 'i'));
@@ -156,8 +211,11 @@ function parseDateValue(value, nowMs) {
         const year = Number(isoMonthOnly ? raw.slice(0, 4) : monthYear[2]);
         const month = isoMonthOnly ? Number(isoMonthOnly[2]) - 1 : monthNumbers[monthYear[1].toLowerCase()];
         if (month !== undefined) {
-            const monthMs = Date.UTC(year, month, 1);
-            return { iso: new Date(monthMs).toISOString(), dateMs: monthMs, precision: 'month-only-estimate', raw: raw };
+            const monthMs = Date.UTC(year, month, 15);
+            if (monthMs <= now + DAY_MS) {
+                return { iso: new Date(monthMs).toISOString(), dateMs: monthMs, precision: 'month-only-estimate', raw: raw };
+            }
+            return null;
         }
     }
 
@@ -205,17 +263,46 @@ function extractEventDate(item, title, snippet, nowMs) {
         item.occurredAt || item.occurred_at || item.eventTimestamp || item.incident_timestamp || null;
     if (structured) {
         const parsed = parseDateValue(structured, nowMs);
-        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-field-from-search-result' };
+        if (parsed) {
+            const approximate = ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(parsed.precision);
+            return {
+                ...parsed,
+                status: parsed.precision === 'year-only-estimate' ? 'event-year-field-from-search-result'
+                    : approximate ? 'approximate-event-date-field-from-search-result'
+                    : 'event-date-field-from-search-result'
+            };
+        }
     }
 
     const text = String(title || '') + ' ' + String(snippet || '');
     const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember)';
-    const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})';
-    const cue = '(?:occurred|happened|took place|was reported to have occurred|terjadi|berlangsung|kejadian(?: terjadi| pada)?|peristiwa terjadi|insiden terjadi)\\s+(?:on|at|pada(?: tanggal)?)?\\s*(' + date + ')';
-    const match = text.match(new RegExp(cue, 'i'));
+    const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|(?:19|20)\\d{2})';
+    const eventWords = '(?:attacks?|bombings?|blasts?|explosions?|explosive device|murders?|homicides?|fatal assaults?|sexual assaults?|rapes?|robberies|thefts?|shootings?|stabbings?|riots?|unrest|clashes?|protests?|floods?|fires?|accidents?|crashes?|landslides?|earthquakes?|kerusuhan|bentrokan|tawuran|ledakan|pengeboman|pembunuhan|pemerkosaan|penjambretan|pencurian|perampokan|kecelakaan|banjir|kebakaran|tanah longsor|gempa bumi|tewas|meninggal dunia)';
+    const directCue = '(?:occurred|happened|took place|was reported to have occurred|incident occurred|event occurred|attack(?:s)? occurred|clash(?:es)? occurred|terjadi|berlangsung|peristiwa terjadi|insiden terjadi|kejadian(?: terjadi| pada)?)\\s+(?:on|at|in|during|pada(?: tanggal)?|tanggal)?\\s*(' + date + ')';
+    const directMatch = text.match(new RegExp(directCue, 'i'));
+    const eventNearDate = text.match(new RegExp('\\b' + eventWords + '\\b[^.!?]{0,45}\\b(?:on|in|during|pada(?: tanggal)?)\\s+(' + date + ')', 'i'));
+    const match = directMatch || eventNearDate;
     if (match) {
         const parsed = parseDateValue(match[1], nowMs);
-        if (parsed) return { ...parsed, status: parsed.precision === 'relative-estimate' ? 'relative-event-date-estimate' : 'event-date-mentioned-in-summary' };
+        if (parsed) {
+            const approximate = ['relative-estimate', 'month-only-estimate', 'year-only-estimate'].includes(parsed.precision);
+            return {
+                ...parsed,
+                status: parsed.precision === 'year-only-estimate' ? 'event-year-mentioned-in-summary'
+                    : approximate ? 'approximate-event-date-mentioned-in-summary'
+                    : 'event-date-mentioned-in-summary'
+            };
+        }
+    }
+
+    // Capture a year only when it is contextually tied to an incident/event term.
+    const yearBeforeEvent = text.match(new RegExp('\\b((?:19|20)\\d{2})\\b[^.!?]{0,35}\\b' + eventWords + '\\b', 'i'));
+    const yearAfterEvent = text.match(new RegExp('\\b' + eventWords + '\\b[^.!?]{0,50}\\b(?:in|during|on|tahun|pada tahun)\\s+((?:19|20)\\d{2})\\b', 'i'));
+    const yearMatch = yearBeforeEvent || yearAfterEvent;
+    if (yearMatch) {
+        const year = yearMatch[1];
+        const parsed = parseDateValue(year, nowMs);
+        if (parsed) return { ...parsed, status: 'event-year-mentioned-in-summary' };
     }
     return null;
 }
@@ -249,6 +336,41 @@ function bucketForAge(ageDays) {
     return 'outside-5-year-window';
 }
 
+function definitelyOutsideFiveYearWindow(parsed, nowMs) {
+    if (!parsed || !Number.isFinite(parsed.dateMs)) return false;
+    const cutoffMs = nowMs - FIVE_YEARS_DAYS * DAY_MS;
+    if (parsed.precision === 'year-only-estimate') {
+        const year = new Date(parsed.dateMs).getUTCFullYear();
+        return Date.UTC(year + 1, 0, 1) - 1 < cutoffMs;
+    }
+    if (parsed.precision === 'month-only-estimate') {
+        const date = new Date(parsed.dateMs);
+        const endOfMonth = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) - 1;
+        return endOfMonth < cutoffMs;
+    }
+    return parsed.dateMs < cutoffMs;
+}
+
+function bucketForParsedDate(ageDays, parsed, nowMs) {
+    if (!parsed || !Number.isFinite(ageDays)) return 'undated';
+    if (definitelyOutsideFiveYearWindow(parsed, nowMs)) return 'outside-5-year-window';
+
+    // For approximate dates near the five-year cutoff, use the newest possible date
+    // in the stated period. This avoids excluding an entire year/month when it overlaps
+    // the allowed window.
+    if (parsed.precision === 'year-only-estimate') {
+        const year = new Date(parsed.dateMs).getUTCFullYear();
+        const newestPossibleAge = Math.max(0, (nowMs - (Date.UTC(year + 1, 0, 1) - 1)) / DAY_MS);
+        return bucketForAge(newestPossibleAge);
+    }
+    if (parsed.precision === 'month-only-estimate') {
+        const date = new Date(parsed.dateMs);
+        const newestPossibleAge = Math.max(0, (nowMs - (Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) - 1)) / DAY_MS);
+        return bucketForAge(newestPossibleAge);
+    }
+    return bucketForAge(ageDays);
+}
+
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
@@ -280,7 +402,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v5?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v6?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -315,7 +437,6 @@ export default {
 
         try {
             const gathered = [];
-            const seen = new Set();
             let successfulSearches = 0;
             const failedSearchWindows = [];
             let rawResultCount = 0;
@@ -362,12 +483,6 @@ export default {
                         if (location.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
                         return;
                     }
-                    const key = targetUrl.toLowerCase();
-                    if (seen.has(key)) {
-                        diagnostics.duplicateCount += 1;
-                        return;
-                    }
-
                     const title = String(item.title || item.name || 'Local public-safety report');
                     const snippet = String(item.snippet || item.description || item.content || '');
                     const combined = (title + ' ' + snippet).toLowerCase();
@@ -386,19 +501,14 @@ export default {
                     const eventParsed = extractEventDate(item, title, snippet, nowMs);
                     const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / DAY_MS) : null;
                     const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / DAY_MS) : null;
+                    const timelineParsed = eventParsed || publicationParsed;
                     const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
                     const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
-                    const timelineBucket = bucketForAge(timelineAgeDays);
+                    const timelineBucket = bucketForParsedDate(timelineAgeDays, timelineParsed, nowMs);
                     if (timelineBucket === 'outside-5-year-window') {
                         diagnostics.rejectedOutsideFiveYearWindowCount += 1;
                         return;
                     }
-                    if (timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
-                    if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
-                    if (eventParsed) diagnostics.eventDateCount += 1;
-                    diagnostics.cityMentionCount += 1;
-                    if (location.scope === 'national-context') diagnostics.nationalContextCount += 1;
-                    seen.add(key);
 
                     let source = '';
                     try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
@@ -418,8 +528,15 @@ export default {
                                 : 'Event date supplied or mentioned: ' + eventParsed.iso.slice(0, 10) + '; verify original source'
                         : 'Event date unconfirmed';
                     const timelineLabel = makeAgeLabel(timelineAgeDays, timelineBasis, publicationParsed, eventParsed);
-                    gathered.push({
-                        id: key,
+                    const alertEligibility = timelineBucket === 'undated'
+                        ? 'manual-review-only'
+                        : timelineBucket === 'recent-30-days' && timelineBasis === 'event-date'
+                            ? 'recent-dated-event-lead-unverified'
+                            : timelineBucket === 'recent-30-days'
+                                ? 'recent-article-event-date-unconfirmed'
+                                : 'historical-awareness-only';
+                    const result = {
+                        id: canonicalizeSourceUrl(targetUrl),
                         title: title,
                         snippet: snippet,
                         url: targetUrl,
@@ -443,23 +560,58 @@ export default {
                         timelineBucket: timelineBucket,
                         timelineLabel: timelineLabel,
                         recencyLabel: timelineLabel,
-                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
+                        searchPass: window.label,
+                        searchPassLabel: window.label,
                         searchWindow: window.label,
+                        searchWindowMeaning: 'search-pass-only-not-publication-or-event-date',
+                        alertEligibility: alertEligibility,
+                        currentIncidentConfirmed: false,
+                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
                         category: category,
                         eventLocation: explicitLocation ? String(explicitLocation) : null,
                         eventLocationScope: location.scope,
                         eventLocationStatus: location.status,
                         locationEvidence: location.reason,
                         verified: false
-                    });
+                    };
+
+                    const dedupeKey = canonicalizeSourceUrl(targetUrl);
+                    const fingerprint = makeContentFingerprint(title, snippet);
+                    const duplicateIndex = gathered.findIndex(entry =>
+                        entry.dedupeKey === dedupeKey ||
+                        (fingerprint && entry.fingerprint && entry.fingerprint === fingerprint)
+                    );
+                    const score = resultQualityScore(result);
+                    if (duplicateIndex >= 0) {
+                        diagnostics.duplicateCount += 1;
+                        if (score > gathered[duplicateIndex].score) {
+                            gathered[duplicateIndex] = {
+                                result: result,
+                                dedupeKey: dedupeKey,
+                                fingerprint: fingerprint,
+                                score: score
+                            };
+                        }
+                        return;
+                    }
+                    gathered.push({ result: result, dedupeKey: dedupeKey, fingerprint: fingerprint, score: score });
                 });
             }
+
+            const uniqueGathered = gathered.map(entry => entry.result);
+            uniqueGathered.forEach(function (item) {
+                if (item.timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
+                if (item.publicationDatePrecision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
+                if (item.eventDate) diagnostics.eventDateCount += 1;
+                diagnostics.cityMentionCount += 1;
+                if (item.eventLocationScope === 'national-context') diagnostics.nationalContextCount += 1;
+            });
 
             const recentResults = [];
             const mediumTermResults = [];
             const longTermResults = [];
             const undatedResults = [];
-            gathered.forEach(function (item) {
+            uniqueGathered.forEach(function (item) {
                 if (item.timelineBucket === 'recent-30-days') recentResults.push(item);
                 else if (item.timelineBucket === 'history-30-days-to-2-years') mediumTermResults.push(item);
                 else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
@@ -473,20 +625,19 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 4,
-                buildVersion: 'timeline-v4-blast-aware',
+                filterVersion: 5,
+                buildVersion: 'timeline-v5-dated-dedupe',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults.slice(0, 8),
                 mediumTermResults: mediumTermResults.slice(0, 8),
                 longTermResults: longTermResults.slice(0, 8),
-                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
                 undatedResults: undatedResults.slice(0, 8),
                 results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event and publication dates are separate. If only publication age is known, the timeline bucket describes the article date, not the event date. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
+                note: 'Event and publication dates are separate. searchPass/searchWindow identify the query pass only, not the incident or publication date. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 4, diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 5, buildVersion: 'timeline-v5-dated-dedupe', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
