@@ -952,10 +952,310 @@
             renderRadarSidebar(type);
         }
 
+        // ---------------- ROUTE PLANNER ----------------
+        function setRouteStatus(message, state = 'neutral') {
+            const element = document.getElementById('route-status');
+            if (!element) return;
+            element.textContent = message;
+            element.style.color = state === 'error' ? '#b91c1c' : state === 'ok' ? '#166534' : state === 'warning' ? '#92400e' : '#64748b';
+        }
+
+        function beginPickDestination() {
+            if (usingFallbackLocation) {
+                setRouteStatus('GPS unavailable. Enable location permission before routing from your current position.', 'error');
+                return;
+            }
+            selectingRouteDestination = true;
+            const button = document.getElementById('pick-destination-btn');
+            if (button) button.classList.add('active');
+            setRouteStatus('Tap the map to choose a destination.', 'ok');
+        }
+
+        async function calculateRouteFromSearch() {
+            if (routeBusy) return;
+            if (usingFallbackLocation) {
+                setRouteStatus('GPS is unavailable. The fallback is Jakarta, so routing is disabled to prevent a wrong origin.', 'error');
+                return;
+            }
+            const query = document.getElementById('route-destination').value.trim();
+            if (!query) return setRouteStatus('Enter a destination or pick one on the map.', 'warning');
+            const coords = query.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+            if (coords) {
+                const lat = Number(coords[1]), lng = Number(coords[2]);
+                if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return setRouteStatus('Invalid latitude/longitude.', 'error');
+                return calculateRouteToCoordinates(lat, lng, query);
+            }
+            if (Date.now() - lastGeocodeAt < 1100) return setRouteStatus('Please wait briefly before another public place search.', 'warning');
+            lastGeocodeAt = Date.now();
+            routeBusy = true;
+            document.getElementById('route-go').disabled = true;
+            setRouteStatus('Searching for destination…', 'neutral');
+            try {
+                const endpoint = new URL('https://nominatim.openstreetmap.org/search');
+                endpoint.searchParams.set('format', 'jsonv2');
+                endpoint.searchParams.set('limit', '1');
+                endpoint.searchParams.set('q', query);
+                const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('Destination search HTTP ' + response.status);
+                const results = await response.json();
+                if (!results.length) throw new Error('Destination not found. Try a more specific place name.');
+                routeDestination = { lat: Number(results[0].lat), lng: Number(results[0].lon) };
+                routeDestinationLabel = results[0].display_name || query;
+                await calculateRouteToCoordinates(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
+            } catch (error) {
+                console.warn('Destination search failed:', error);
+                setRouteStatus(error.message || 'Destination search failed.', 'error');
+            } finally {
+                routeBusy = false;
+                document.getElementById('route-go').disabled = false;
+            }
+        }
+
+        async function calculateRouteToCoordinates(destLat, destLng, label) {
+            if (usingFallbackLocation) return setRouteStatus('GPS unavailable. Enable current-location access before routing.', 'error');
+            if (routeBusy) return;
+            routeBusy = true;
+            selectingRouteDestination = false;
+            document.getElementById('route-go').disabled = true;
+            setRouteStatus('Calculating driving route and checking mapped hazards…', 'neutral');
+            routeDestination = { lat: Number(destLat), lng: Number(destLng) };
+            routeDestinationLabel = label || 'Destination';
+            try {
+                const endpoint = 'https://router.project-osrm.org/route/v1/driving/' +
+                    userLocation.lng + ',' + userLocation.lat + ';' + routeDestination.lng + ',' + routeDestination.lat +
+                    '?overview=full&geometries=geojson&steps=true&alternatives=true';
+                const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('Routing service HTTP ' + response.status);
+                const payload = await response.json();
+                if (payload.code !== 'Ok' || !Array.isArray(payload.routes) || !payload.routes.length) throw new Error('No driving route found. Try a different destination.');
+                routeOptions = payload.routes.slice(0, 3).map((route, index) => ({
+                    index: index, geometry: route.geometry, distance: Number(route.distance || 0),
+                    duration: Number(route.duration || 0), legs: route.legs || [],
+                    warnings: getRouteWarnings(route.geometry.coordinates)
+                }));
+                selectedRouteIndex = 0;
+                applyRouteOption(0, true);
+            } catch (error) {
+                console.warn('Route calculation failed:', error);
+                setRouteStatus((error.message || 'Route calculation failed.') + ' The free OSRM demo can be rate-limited or unavailable.', 'error');
+            } finally {
+                routeBusy = false;
+                document.getElementById('route-go').disabled = false;
+            }
+        }
+
+        function isHazardForRouting(inc) {
+            return ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'accident', 'crime', 'news_event'].includes(inc.type);
+        }
+
+        function distanceFromPointToRouteMeters(pointLat, pointLng, coordinates) {
+            if (!Array.isArray(coordinates) || coordinates.length < 2) return Infinity;
+            const scaleX = 111320 * Math.max(0.01, Math.cos(pointLat * Math.PI / 180));
+            const scaleY = 110540;
+            let minimum = Infinity;
+            for (let i = 1; i < coordinates.length; i++) {
+                const a = coordinates[i - 1], b = coordinates[i];
+                const x1 = (Number(a[0]) - pointLng) * scaleX;
+                const y1 = (Number(a[1]) - pointLat) * scaleY;
+                const x2 = (Number(b[0]) - pointLng) * scaleX;
+                const y2 = (Number(b[1]) - pointLat) * scaleY;
+                const dx = x2 - x1, dy = y2 - y1;
+                const len2 = dx * dx + dy * dy;
+                const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, -(x1 * dx + y1 * dy) / len2));
+                minimum = Math.min(minimum, Math.hypot(x1 + t * dx, y1 + t * dy));
+            }
+            return minimum;
+        }
+
+        function getRouteWarnings(coordinates) {
+            const input = document.getElementById('route-alert-radius');
+            routeBufferMeters = input ? Number(input.value) : 1000;
+            return incidents.filter(isHazardForRouting)
+                .map(inc => ({ incident: inc, distance: distanceFromPointToRouteMeters(inc.lat, inc.lng, coordinates) }))
+                .filter(row => row.distance <= routeBufferMeters)
+                .sort((a, b) => a.distance - b.distance);
+        }
+
+        function formatRouteDistance(meters) {
+            return meters >= 1000 ? (meters / 1000).toFixed(meters >= 10000 ? 0 : 1) + ' km' : Math.round(meters) + ' m';
+        }
+
+        function formatRouteDuration(seconds) {
+            const mins = Math.max(1, Math.round(seconds / 60));
+            return mins < 60 ? mins + ' min' : Math.floor(mins / 60) + ' hr ' + (mins % 60 ? mins % 60 + ' min' : '');
+        }
+
+        function routeManeuverText(step) {
+            const maneuver = step.maneuver || {};
+            const type = String(maneuver.type || '').toLowerCase();
+            const modifier = String(maneuver.modifier || '').toLowerCase();
+            const road = step.name ? ' onto ' + step.name : '';
+            if (type === 'depart') return 'Start driving' + road;
+            if (type === 'arrive') return 'Arrive at destination';
+            if (['turn', 'end of road', 'off ramp', 'on ramp'].includes(type)) {
+                const direction = modifier.includes('left') ? 'Turn left' : modifier.includes('right') ? 'Turn right' :
+                    modifier.includes('straight') ? 'Continue straight' : modifier ? 'Keep ' + modifier : 'Continue';
+                return direction + road;
+            }
+            if (['roundabout', 'rotary', 'roundabout turn'].includes(type)) return 'At roundabout' + (maneuver.exit ? ', take exit ' + maneuver.exit : '') + road;
+            if (['fork', 'merge', 'continue', 'new name'].includes(type)) return (modifier ? 'Keep ' + modifier : 'Continue') + road;
+            return (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Continue') + road;
+        }
+
+        function applyRouteOption(index, fitMap) {
+            if (!routeOptions[index] || !map) return;
+            selectedRouteIndex = index;
+            const route = routeOptions[index];
+            route.warnings = getRouteWarnings(route.geometry.coordinates);
+            routeWarnings = route.warnings;
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = L.geoJSON(route.geometry, {
+                interactive: false,
+                style: { color: '#2563eb', weight: 6, opacity: 0.82, lineCap: 'round', lineJoin: 'round' }
+            }).addTo(map);
+            if (routeStartMarker) map.removeLayer(routeStartMarker);
+            if (routeEndMarker) map.removeLayer(routeEndMarker);
+            routeStartMarker = L.circleMarker([userLocation.lat, userLocation.lng], {
+                radius: 7, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1
+            }).bindPopup('Route origin · current GPS location').addTo(map);
+            routeEndMarker = L.marker([routeDestination.lat, routeDestination.lng], { title: 'Route destination' })
+                .bindTooltip(routeDestinationLabel || 'Destination').addTo(map);
+            if (markersLayer && markersLayer.eachLayer) markersLayer.eachLayer(layer => { if (layer.setZIndexOffset) layer.setZIndexOffset(700); });
+            if (fitMap) map.fitBounds(routeLayer.getBounds(), { padding: [28, 28], maxZoom: 15 });
+
+            document.getElementById('route-summary').classList.remove('hidden');
+            document.getElementById('route-summary-main').textContent = formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' estimated driving';
+            document.getElementById('route-summary-meta').textContent = route.warnings.length + ' mapped report(s) within ' + formatRouteDistance(routeBufferMeters) + ' of route · ' + routeDestinationLabel;
+            const googleUrl = new URL('https://www.google.com/maps/dir/');
+            googleUrl.searchParams.set('api', '1');
+            googleUrl.searchParams.set('origin', userLocation.lat + ',' + userLocation.lng);
+            googleUrl.searchParams.set('destination', routeDestination.lat + ',' + routeDestination.lng);
+            googleUrl.searchParams.set('travelmode', 'driving');
+            document.getElementById('route-google-link').href = googleUrl.toString();
+            renderRouteAlternatives();
+            renderRouteWarnings();
+            renderRouteSteps(route.legs);
+            setRouteStatus('Route estimated by the public OSRM demo service. Route estimates and hazard coverage are not guaranteed.', 'warning');
+        }
+
+        function renderRouteAlternatives() {
+            const container = document.getElementById('route-alternatives');
+            container.innerHTML = '';
+            if (routeOptions.length < 2) return;
+            const heading = document.createElement('p');
+            heading.className = 'text-[10px] font-extrabold text-slate-700 mt-2';
+            heading.textContent = 'Available route options';
+            container.appendChild(heading);
+            routeOptions.forEach((route, index) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'route-alt-btn' + (index === selectedRouteIndex ? ' active' : '');
+                button.textContent = 'Route ' + String.fromCharCode(65 + index) + ' · ' + formatRouteDistance(route.distance) + ' · ' + formatRouteDuration(route.duration) + ' · ' + route.warnings.length + ' report(s) near route';
+                button.addEventListener('click', () => applyRouteOption(index, true));
+                container.appendChild(button);
+            });
+        }
+
+        function renderRouteWarnings() {
+            const container = document.getElementById('route-alerts');
+            container.innerHTML = '';
+            const heading = document.createElement('p');
+            heading.className = 'text-[10px] font-extrabold text-slate-800 mt-2';
+            heading.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-amber-600 mr-1"></i> Reports near this route';
+            container.appendChild(heading);
+            if (!routeWarnings.length) {
+                const empty = document.createElement('p');
+                empty.className = 'text-[10px] text-slate-500 mt-1';
+                empty.textContent = 'No mapped hazard reports found inside the selected corridor. This does not prove that the route is safe.';
+                container.appendChild(empty);
+                return;
+            }
+            routeWarnings.forEach(entry => {
+                const inc = entry.incident;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'route-warning';
+                const title = document.createElement('span');
+                title.className = 'route-warning-title';
+                title.textContent = inc.title || 'Nearby hazard report';
+                const meta = document.createElement('span');
+                meta.className = 'route-warning-meta';
+                meta.textContent = formatRouteDistance(entry.distance) + ' from route · ' + (inc.sourceName || (INCIDENT_TYPES[inc.type] || {}).source || 'Unknown source') + ' · ' + (inc.timeText || 'Time unknown');
+                button.appendChild(title);
+                button.appendChild(meta);
+                button.addEventListener('click', () => openIncidentSheet(inc));
+                container.appendChild(button);
+            });
+            const note = document.createElement('p');
+            note.className = 'route-warning-note';
+            note.textContent = 'These are available reports, not a complete hazard survey. Confirm flood depth, road access and official instructions before entering a risk area.';
+            container.appendChild(note);
+        }
+
+        function renderRouteSteps(legs) {
+            const container = document.getElementById('route-steps');
+            container.innerHTML = '';
+            const steps = [];
+            (legs || []).forEach(leg => (leg.steps || []).forEach(step => steps.push(step)));
+            if (!steps.length) {
+                container.textContent = 'Turn-by-turn instructions are not available for this route.';
+                return;
+            }
+            steps.forEach((step, index) => {
+                const row = document.createElement('div');
+                row.className = 'route-step';
+                const marker = document.createElement('span');
+                marker.className = 'route-step-index';
+                marker.textContent = String(index + 1);
+                const text = document.createElement('span');
+                text.className = 'flex-1';
+                const instruction = document.createElement('span');
+                instruction.className = 'block font-semibold';
+                instruction.textContent = routeManeuverText(step);
+                const distance = document.createElement('span');
+                distance.className = 'block text-slate-500 mt-1';
+                distance.textContent = formatRouteDistance(Number(step.distance || 0));
+                text.appendChild(instruction);
+                text.appendChild(distance);
+                row.appendChild(marker);
+                row.appendChild(text);
+                container.appendChild(row);
+            });
+        }
+
+        function onRouteBufferChange() {
+            const input = document.getElementById('route-alert-radius');
+            routeBufferMeters = input ? Number(input.value) : 1000;
+            if (!routeOptions.length) return;
+            routeOptions.forEach(route => { route.warnings = getRouteWarnings(route.geometry.coordinates); });
+            applyRouteOption(selectedRouteIndex, false);
+        }
+
+        function clearRoute() {
+            selectingRouteDestination = false;
+            routeOptions = [];
+            routeWarnings = [];
+            routeDestination = null;
+            routeDestinationLabel = '';
+            if (routeLayer && map) map.removeLayer(routeLayer);
+            if (routeStartMarker && map) map.removeLayer(routeStartMarker);
+            if (routeEndMarker && map) map.removeLayer(routeEndMarker);
+            routeLayer = routeStartMarker = routeEndMarker = null;
+            document.getElementById('route-summary').classList.add('hidden');
+            document.getElementById('route-alternatives').innerHTML = '';
+            document.getElementById('route-alerts').innerHTML = '';
+            document.getElementById('route-steps').innerHTML = '';
+            document.getElementById('route-destination').value = '';
+            const pickButton = document.getElementById('pick-destination-btn');
+            if (pickButton) pickButton.classList.remove('active');
+            setRouteStatus(usingFallbackLocation ? 'GPS unavailable. Enable browser location to plan routes.' : 'Choose a destination to calculate a route and check reports along it.', 'neutral');
+        }
+
         function routeToIncident() {
             if (!currentSelectedIncident || !Number.isFinite(Number(currentSelectedIncident.lat)) || !Number.isFinite(Number(currentSelectedIncident.lng))) return;
-            const destination = `${currentSelectedIncident.lat},${currentSelectedIncident.lng}`;
-            window.open('https://www.openstreetmap.org/directions?to=' + encodeURIComponent(destination), '_blank', 'noopener');
+            const destination = currentSelectedIncident;
+            document.getElementById('route-destination').value = destination.title || destination.lat + ', ' + destination.lng;
+            calculateRouteToCoordinates(Number(destination.lat), Number(destination.lng), destination.title || 'Selected incident');
         }
 
         // --- FEED & SAVED VIEWS ---
