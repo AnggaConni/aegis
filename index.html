@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CivilAegis - Personal Warning System</title>
+    <meta name="theme-color" content="#0f172a">
+    <meta name="description" content="CivilAegis personal safety radar with saved one-way and round-trip routes and nearby hazard reports.">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <title>CivilAegis - Personal Safety Radar</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -497,7 +501,7 @@
                 routeHazardCandidates = Array.isArray(snapshot.routeHazardCandidates)
                     ? snapshot.routeHazardCandidates.map(item => ({ ...item, cachedLocal: true }))
                     : incidents.slice();
-                webIntel = Array.isArray(snapshot.webIntel) ? snapshot.webIntel : [];
+                webIntel = Array.isArray(snapshot.webIntel) ? snapshot.webIntel.map(item => ({ ...item, cachedLocal: true })) : [];
             }
             const savedPlan = readStoredJson(JOURNEY_PLAN_KEY, null);
             if (savedPlan && savedPlan.origin && savedPlan.destination && savedPlan.routes) {
@@ -512,7 +516,7 @@
                 if (!routeOptions.length && activeJourneyLeg === 'return' && Array.isArray(savedPlan.routes.outbound)) {
                     routeOptions = [];
                 }
-                selectedRouteIndex = Math.min(Number(savedPlan.selectedRouteIndex) || 0, Math.max(0, routeOptions.length - 1));
+                selectedRouteIndex = Math.min(Number(savedPlan.selectedIndexes && savedPlan.selectedIndexes[activeJourneyLeg]) || 0, Math.max(0, routeOptions.length - 1));
             }
             updateJourneyControls();
             updateOfflinePlanNote();
@@ -562,6 +566,9 @@
             if (!navigator.onLine && status) {
                 status.textContent = 'Offline: showing saved route/report data. New alerts and live routing cannot be fetched.';
                 status.style.color = '#92400e';
+            } else if (navigator.onLine && status && status.textContent.startsWith('Offline:')) {
+                status.textContent = 'Online. Refresh data before travelling.';
+                status.style.color = '#166534';
             }
         }
 
@@ -1652,7 +1659,8 @@
             renderRouteAlternatives();
             renderRouteWarnings();
             renderRouteSteps(route.legs);
-            setRouteStatus('Prototype route only: static directions, no continuous GPS tracking or automatic rerouting. Estimates and hazard coverage are not guaranteed.', 'warning');
+            saveJourneyPlan();
+            setRouteStatus('Saved route preview: not continuous GPS navigation or automatic rerouting. Estimates and hazard coverage are not guaranteed.', 'warning');
         }
 
         function renderRouteAlternatives() {
