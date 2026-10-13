@@ -6,7 +6,7 @@ const workerSource = await readFile(new URL('../tinyfish-worker.js', import.meta
 const workerModule = await import('data:text/javascript;base64,' + Buffer.from(workerSource).toString('base64'));
 const worker = workerModule.default;
 
-async function runWorker(rowsByPass, sourcePages = {}) {
+async function runWorker(rowsByPass, sourcePages = {}, options = {}) {
   const originalFetch = globalThis.fetch;
   const originalCaches = globalThis.caches;
   let searchIndex = 0;
@@ -23,11 +23,12 @@ async function runWorker(rowsByPass, sourcePages = {}) {
 
     if (requestUrl.hostname === 'nominatim.openstreetmap.org') {
       return new Response(JSON.stringify({
-        address: { city: 'Jakarta', state: 'DKI Jakarta', country: 'Indonesia' }
+        address: options.address || { city: 'Jakarta', state: 'DKI Jakarta', country: 'Indonesia' }
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
     if (requestUrl.hostname === 'api.search.tinyfish.ai') {
+      if (Array.isArray(options.searchQueries)) options.searchQueries.push(requestUrl.searchParams.get('query') || '');
       const rows = rowsByPass[searchIndex] || [];
       searchIndex += 1;
       return new Response(JSON.stringify({ results: rows }), {
@@ -92,8 +93,8 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
     }]
   ]);
 
-  assert.equal(body.filterVersion, 9);
-  assert.equal(body.buildVersion, 'timeline-v5.2.2-history-precedence');
+  assert.equal(body.filterVersion, 10);
+  assert.equal(body.buildVersion, 'global-drr-v1');
   assert.equal(body.results.length, 0, 'dated historical evidence should remove the undated duplicate');
   assert.equal(body.undatedResults.length, 0);
   assert.ok(body.diagnostics.rejectedOutsideFiveYearWindowCount >= 1);
@@ -444,4 +445,57 @@ test('the Worker returns 429 after the per-client burst allowance is used', asyn
     if (originalCaches === undefined) delete globalThis.caches;
     else globalThis.caches = originalCaches;
   }
+});
+
+
+test('reverse-geocoded country and region drive global search without Indonesia hardcoding', async () => {
+  const searchQueries = [];
+  const body = await runWorker([
+    [],
+    [],
+    [{
+      title: 'Papua New Guinea national survey finds high prevalence of sexual violence against women',
+      snippet: 'A population-based survey in Papua New Guinea reports that many women have experienced sexual violence. This study describes national prevalence, not an incident in the city where the user is located.',
+      publishedAt: new Date(Date.now() - 6 * 365.2425 * 86400000).toISOString(),
+      url: 'https://example.com/papua-new-guinea-prevalence-survey'
+    }]
+  ], {}, {
+    address: { city: 'Port Moresby', state: 'National Capital District', country: 'Papua New Guinea' },
+    searchQueries
+  });
+
+  assert.match(body.area, /Port Moresby, National Capital District, Papua New Guinea/);
+  assert.equal(searchQueries.length, 3);
+  assert.ok(searchQueries.every(query => /Papua New Guinea/.test(query)), 'all search windows should target the reverse-geocoded country');
+  assert.ok(searchQueries.every(query => !/locality, Indonesia|Search Indonesian/.test(query)), 'queries must not hardcode Indonesia');
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].evidenceType, 'structural-risk');
+  assert.equal(body.results[0].timelineBucket, 'risk-context');
+  assert.equal(body.results[0].alertEligibility, 'risk-context-only');
+  assert.equal(body.results[0].eventLocationScope, 'country-context');
+  assert.equal(body.results[0].category, 'sexual_violence');
+});
+
+test('a three-year-old local bombing is retained as historical incident context, not undated or current', async () => {
+  const eventDate = new Date(Date.now() - 3 * 365.2425 * 86400000).toISOString().slice(0, 10);
+  const body = await runWorker([
+    [],
+    [],
+    [{
+      title: 'Port Moresby bombing reported three years ago',
+      snippet: 'Authorities reported a bomb attack in Port Moresby, Papua New Guinea. The article describes a historical event.',
+      eventDate,
+      publishedAt: eventDate,
+      url: 'https://example.com/port-moresby-bombing'
+    }]
+  ], {}, {
+    address: { city: 'Port Moresby', state: 'National Capital District', country: 'Papua New Guinea' }
+  });
+
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].timelineBucket, 'history-2-to-5-years');
+  assert.equal(body.results[0].timelineBasis, 'event-date');
+  assert.equal(body.results[0].category, 'explosion_or_blast');
+  assert.equal(body.results[0].alertEligibility, 'historical-awareness-only');
+  assert.equal(body.results[0].currentIncidentConfirmed, false);
 });
