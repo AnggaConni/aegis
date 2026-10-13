@@ -120,26 +120,38 @@ function getLocality(address, fallback) {
     address = address || {};
     const municipality = address.city || address.town || address.municipality ||
         address.county || address.city_municipality || address.state_district || '';
-    const region = address.state || address.province || '';
+    const region = address.state || address.province || address.region || '';
+    const country = address.country || '';
     const unique = [];
-    [municipality, region, 'Indonesia'].filter(Boolean).forEach(value => {
-        if (!unique.includes(value)) unique.push(value);
+    [municipality, region, country].filter(Boolean).forEach(value => {
+        const clean = String(value).trim();
+        if (clean && !unique.some(existing => normalize(existing) === normalize(clean))) unique.push(clean);
     });
-    return unique.length > 1 ? unique.join(', ') : (municipality || region || fallback) + ', Indonesia';
+    // Use the actual reverse-geocoded country. Never silently label an unknown location as Indonesia.
+    return unique.length ? unique.join(', ') : String(fallback || 'Unknown area');
 }
 
 function getLocalitySearchTerms(locality) {
-    const firstPart = String(locality || '').split(',')[0].trim();
-    const municipality = firstPart
+    const parts = String(locality || '').split(',').map(value => value.trim()).filter(Boolean);
+    const cleanedParts = parts.map(part => part
         .replace(/^daerah khusus ibukota\s+/i, '')
         .replace(/^daerah istimewa\s+/i, '')
         .replace(/^(kota administrasi|kabupaten administrasi|kota|kabupaten|regency|municipality|city of|city|kab\.?|kot\.?|dki)\s+/i, '')
-        .trim();
-    return Array.from(new Set([municipality, firstPart].map(normalize).filter(value => value.length >= 4)))
-        .sort((a, b) => b.length - a.length);
+        .trim());
+    // Preserve most-specific-first order while retaining region and country names for
+    // national risk/prevalence material that may not mention the user's city.
+    return Array.from(new Set(cleanedParts.concat(parts).map(normalize).filter(value => value.length >= 3)));
 }
 
-function assessIncidentLocation(item, localityTerms) {
+function isStructuralRiskContext(title, snippet) {
+    const raw = String(title || '') + ' ' + String(snippet || '');
+    const text = normalize(raw);
+    const hasEvidenceFrame = /\b(prevalence|survey|studies|study|research|risk assessment|victimization|victimisation|lifetime experience|ever experienced|incidence rate|population based|national sample|women and girls|percentage|percent|per cent|rate of|proportion of|prevalensi|survei|penelitian|riset|pernah mengalami|angka kejadian|tingkat risiko)\b/.test(text) ||
+        /\b\d+(?:\.\d+)?\s*%/.test(raw);
+    return hasEvidenceFrame && classifyIncident(title, snippet).category !== 'public_safety';
+}
+
+function assessIncidentLocation(item, localityTerms, locality) {
     const title = String(item.title || item.name || '');
     const snippet = String(item.snippet || item.description || item.content || '');
     const url = String(item.url || item.link || item.href || '');
@@ -157,17 +169,25 @@ function assessIncidentLocation(item, localityTerms) {
     }
 
     const allText = title + ' ' + snippet + ' ' + url;
+    const structuralRiskContext = isStructuralRiskContext(title, snippet);
     const genericReference = /(crime statistics|violent crime rate|crime data explorer|crime in the united states|uniform crime reporting|annual crime figures|crime statistics by state|research starters|topic pages table)/i.test(allText);
-    const genericCrimeOverview = /(crime in indonesia|crime overview|crime rate|murder rate|homicide rate|homicides? per 100,?000|criminality statistics|crime index|crime data by country|jakarta is (?:a )?(?:remarkably )?safe city|indonesia's murder rate)/i.test(title + ' ' + snippet);
-    const genericCrimeCoverage = /(robbers?\W+haunts?\W+jakarta|crime wave|crime roundup|crime trends?|criminality overview|crime documentary|crime compilation|crime situation|investigation dipo|anti-crime crackdown|campaign against (?:violent )?crime|police.{0,30}campaign against|new police.{0,25}campaign|recurring street crime)/i.test(title + ' ' + snippet);
+    const genericCrimeOverview = /(crime overview|crime rate|murder rate|homicide rate|homicides? per 100,?000|criminality statistics|crime index|crime data by country)/i.test(title + ' ' + snippet);
+    const genericCrimeCoverage = /(crime wave|crime roundup|crime trends?|criminality overview|crime documentary|crime compilation|crime situation|anti-crime crackdown|campaign against (?:violent )?crime|police.{0,30}campaign against|new police.{0,25}campaign|recurring street crime)/i.test(title + ' ' + snippet);
     const specificIncidentSignal = /\b(arrest(?:ed|s)?|detain(?:ed|s)?|occurred|happened|took place|attacked|assaulted|was killed|were killed|died|dead after|fatal clash|bomb blasts?|explosions?|robbed|stole|was raped|was stabbed|was run over|menewaskan|tewas|ditangkap|terjadi|dianiaya|dibunuh|dibacok|dirampok|kecelakaan|named victim|suspect charged|police confirmed the incident)\b/i.test(title + ' ' + snippet);
     const foreignGenericDomain = /(ucr\.fbi\.gov|bjs\.ojp\.gov|cde\.ucr\.cjis\.gov|suffolkpd\.org|osc\.ny\.gov|crimeindex\.org|ebsco\.com|wikipedia\.org)/i.test(url);
-    if (genericReference || foreignGenericDomain || ((genericCrimeOverview || genericCrimeCoverage) && !specificIncidentSignal)) {
+    // Exclude broad crime roundups, but preserve geographically relevant prevalence studies
+    // and risk assessments as a separate evidence class.
+    if (foreignGenericDomain || ((genericReference || genericCrimeOverview || genericCrimeCoverage) &&
+        !specificIncidentSignal && !structuralRiskContext)) {
         return { accepted: false, reason: 'generic-or-foreign-reference' };
     }
 
-    const nationalScale = /(nationwide|across indonesia|throughout indonesia|across the country|across the archipelago|several provinces|multiple provinces|multiple cities|nationwide unrest|nationwide protests|di seluruh indonesia|lintas provinsi|sejumlah daerah|berbagai daerah|kerusuhan nasional)/i.test(allText);
-    const city = localityTerms.find(term => !term.startsWith('daerah khusus ibukota')) || matchedTerm;
+    const nationalScale = /(nationwide|across the country|throughout the country|nationally|nationwide unrest|nationwide protests|multiple provinces|multiple cities|across the region|across the nation)/i.test(allText);
+    const localityParts = String(locality || '').split(',').map(value => normalize(value)).filter(Boolean);
+    const countryTerm = localityParts.length ? localityParts[localityParts.length - 1] : '';
+    const countryContext = !!countryTerm && matchedTerm === countryTerm &&
+        !localityTerms.slice(0, -1).some(term => normalizedContent.includes(term));
+    const city = localityTerms[0] || matchedTerm;
     const escapedCity = city.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
     const explicitLocalContext = new RegExp(
         '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?#?' + escapedCity + '\\b|' +
@@ -175,17 +195,28 @@ function assessIncidentLocation(item, localityTerms) {
         'i'
     ).test(contentText);
 
-    const scope = nationalScale && !explicitLocalContext
-        ? 'national-context'
-        : explicitLocalContext
-            ? 'city-mentioned-location-unverified'
-            : 'city-mentioned-context-unclear';
-    const status = scope === 'national-context'
-        ? 'National or multi-location report; the city is mentioned but exact incident locations are not confirmed.'
-        : scope === 'city-mentioned-location-unverified'
-            ? 'The city is linked to the incident in the text; exact incident location has not been independently confirmed.'
-            : 'The city is mentioned in the article, but the event location is unclear.';
-    return { accepted: true, reason: 'city-mentioned', scope: scope, status: status, matchedTerm: matchedTerm };
+    const scope = countryContext
+        ? 'country-context'
+        : nationalScale && !explicitLocalContext
+            ? 'national-context'
+            : explicitLocalContext
+                ? 'city-mentioned-location-unverified'
+                : 'city-mentioned-context-unclear';
+    const status = scope === 'country-context'
+        ? 'Country-level context; this does not confirm an incident at the user's exact location.'
+        : scope === 'national-context'
+            ? 'National or multi-location report; exact incident locations are not confirmed.'
+            : scope === 'city-mentioned-location-unverified'
+                ? 'The locality is linked to the incident in the text; exact incident location has not been independently confirmed.'
+                : 'The locality is mentioned in the article, but the event location is unclear.';
+    return {
+        accepted: true,
+        reason: structuralRiskContext ? 'structural-risk-context' : 'location-mentioned',
+        scope: scope,
+        status: status,
+        matchedTerm: matchedTerm,
+        evidenceType: structuralRiskContext ? 'structural-risk' : 'incident'
+    };
 }
 
 function parseDateValue(value, nowMs) {
@@ -873,7 +904,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v10?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v11?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -899,12 +930,12 @@ export default {
         } catch (_) {}
 
         const localityTerms = getLocalitySearchTerms(locality);
-        const baseQuery = 'Find specific public-safety incidents reported in or relevant to ' + locality + ', Indonesia. Search Indonesian and English-language local reporting for pembunuhan, pemerkosaan, kekerasan seksual, kerusuhan, bentrokan, tawuran, tewas, meninggal dunia, pencopetan, penjambretan, perampokan, pencurian ponsel, penipuan, scam, skimming kartu, kecelakaan lalu lintas, banjir, kebakaran, murder, homicide, sexual assault, rape, riot, fatal clash, pickpocketing, robbery, scam, card fraud, road accident and other public-safety events. Prefer official police, courts, local government, emergency services, and established Indonesian newsrooms. Include separate publication date and incident/event date if available, the reported location, fatalities/injuries if reported, and the original source URL. Distinguish a city-specific incident from national/multi-location coverage. Do not return generic crime statistics, research-reference pages, incidents in unrelated countries, or invented events.';
+        const baseQuery = 'Find public-safety incidents and relevant structural-risk evidence for ' + locality + '. Search the country and administrative area identified from the user location, including local-language reporting and English-language sources where useful. Cover incidents involving murder, sexual and gender-based violence, unrest, fatal clashes, theft, robbery, scams, road accidents, disasters, and other public-safety risks. Also find geographically relevant prevalence studies, national surveys, victimization research, and credible risk assessments that can inform prevention even when no incident is currently active. Prefer official police, courts, government, emergency services, public-health agencies, research institutes, and established local newsrooms. Include original source URLs, separate publication and event dates, study period if available, reported location, and fatalities/injuries where relevant. Distinguish city-specific incidents from regional or country-level context. Do not invent events or treat a search result as independently verified.';
 
         const timeWindows = [
-            { label: 'recent-30-days', query: 'published or occurred within the last 30 days' },
-            { label: 'history-30-days-to-2-years', query: 'published or occurred from 30 days ago up to 2 years ago' },
-            { label: 'history-2-to-5-years', query: 'published or occurred from 2 years ago up to 5 years ago' }
+            { label: 'recent-30-days', query: 'incident reports published or occurring within the last 30 days' },
+            { label: 'history-30-days-to-2-years', query: 'incident reports published or occurring from 30 days ago up to 2 years ago' },
+            { label: 'historical-and-risk-context', query: 'incident reports from 2 to 5 years ago; also relevant prevalence studies, national surveys, and risk assessments published in the past 10 years' }
         ];
 
         try {
@@ -916,6 +947,7 @@ export default {
             const failedSearchWindows = [];
             let rawResultCount = 0;
             const diagnostics = {
+                structuralRiskContextCount: 0,
                 rejectedNonLocalCount: 0,
                 rejectedGenericReferenceCount: 0,
                 rejectedNoSourceUrlCount: 0,
@@ -960,7 +992,7 @@ export default {
                         diagnostics.rejectedNoSourceUrlCount += 1;
                         return;
                     }
-                    const location = assessIncidentLocation(item, localityTerms);
+                    const location = assessIncidentLocation(item, localityTerms, locality);
                     if (!location.accepted) {
                         diagnostics.rejectedNonLocalCount += 1;
                         if (location.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
@@ -968,6 +1000,7 @@ export default {
                     }
                     const title = String(item.title || item.name || 'Local public-safety report');
                     const snippet = String(item.snippet || item.description || item.content || '');
+                    const structuralRiskContext = isStructuralRiskContext(title, snippet);
                     const earlyDedupeKey = canonicalizeSourceUrl(targetUrl);
                     const earlyFingerprint = makeContentFingerprint(title, snippet);
                     if (rejectedOutOfWindowKeys.has(earlyDedupeKey) ||
@@ -991,11 +1024,19 @@ export default {
                     const eventParsed = enrichedDates.eventParsed;
                     const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / DAY_MS) : null;
                     const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / DAY_MS) : null;
-                    const timelineParsed = eventParsed || publicationParsed;
-                    const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
-                    const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
-                    const timelineBucket = bucketForParsedDate(timelineAgeDays, timelineParsed, nowMs);
-                    if (timelineBucket === 'outside-5-year-window') {
+                    const timelineParsed = structuralRiskContext ? publicationParsed : (eventParsed || publicationParsed);
+                    const timelineAgeDays = structuralRiskContext
+                        ? publicationAgeDays
+                        : eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
+                    const timelineBasis = structuralRiskContext
+                        ? publicationAgeDays !== null ? 'risk-context-publication-date' : 'undated'
+                        : eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
+                    const timelineBucket = structuralRiskContext
+                        ? 'risk-context'
+                        : bucketForParsedDate(timelineAgeDays, timelineParsed, nowMs);
+                    const riskContextTooOld = structuralRiskContext && publicationAgeDays !== null &&
+                        publicationAgeDays > 10 * 365.2425;
+                    if ((!structuralRiskContext && timelineBucket === 'outside-5-year-window') || riskContextTooOld) {
                         const rejectedKey = canonicalizeSourceUrl(targetUrl);
                         const rejectedFingerprint = makeContentFingerprint(title, snippet);
                         rejectedOutOfWindowKeys.add(rejectedKey);
@@ -1030,13 +1071,15 @@ export default {
                                 : 'Event date supplied or mentioned: ' + eventParsed.iso.slice(0, 10) + '; verify original source'
                         : 'Event date unconfirmed';
                     const timelineLabel = makeAgeLabel(timelineAgeDays, timelineBasis, publicationParsed, eventParsed);
-                    const alertEligibility = timelineBucket === 'undated'
-                        ? 'manual-review-only'
-                        : timelineBucket === 'recent-30-days' && timelineBasis === 'event-date'
-                            ? 'recent-dated-event-lead-unverified'
-                            : timelineBucket === 'recent-30-days'
-                                ? 'recent-article-event-date-unconfirmed'
-                                : 'historical-awareness-only';
+                    const alertEligibility = structuralRiskContext
+                        ? 'risk-context-only'
+                        : timelineBucket === 'undated'
+                            ? 'manual-review-only'
+                            : timelineBucket === 'recent-30-days' && timelineBasis === 'event-date'
+                                ? 'recent-dated-event-lead-unverified'
+                                : timelineBucket === 'recent-30-days'
+                                    ? 'recent-article-event-date-unconfirmed'
+                                    : 'historical-awareness-only';
                     const result = {
                         id: canonicalizeSourceUrl(targetUrl),
                         title: title,
@@ -1068,7 +1111,10 @@ export default {
                         searchWindowMeaning: 'search-pass-only-not-publication-or-event-date',
                         alertEligibility: alertEligibility,
                         currentIncidentConfirmed: false,
-                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
+                        evidenceType: structuralRiskContext ? 'structural-risk' : 'incident',
+                        dateStatus: structuralRiskContext
+                            ? publicationParsed ? 'Risk-context source date parsed; not a current incident' : 'Risk-context source date unconfirmed; not a current incident'
+                            : eventParsed ? eventParsed.status : publicationParsed ? 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
                         category: category,
                         incidentTags: classified.incidentTags,
                         dateEnrichmentSource: enrichedDates.sourceKind || (enrichedDates.enriched ? 'original-source-metadata-or-body' : 'search-result-only'),
@@ -1106,6 +1152,7 @@ export default {
             const uniqueGathered = gathered.map(entry => entry.result);
             uniqueGathered.forEach(function (item) {
                 if (item.timelineBucket === 'undated') diagnostics.dateUnconfirmedCount += 1;
+                if (item.evidenceType === 'structural-risk') diagnostics.structuralRiskContextCount += 1;
                 if (item.publicationDatePrecision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
                 if (item.eventDate) diagnostics.eventDateCount += 1;
                 else diagnostics.eventDateUnconfirmedCount += 1;
@@ -1116,11 +1163,13 @@ export default {
             const recentResults = [];
             const mediumTermResults = [];
             const longTermResults = [];
+            const riskContextResults = [];
             const undatedResults = [];
             uniqueGathered.forEach(function (item) {
                 if (item.timelineBucket === 'recent-30-days') recentResults.push(item);
                 else if (item.timelineBucket === 'history-30-days-to-2-years') mediumTermResults.push(item);
                 else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
+                else if (item.timelineBucket === 'risk-context') riskContextResults.push(item);
                 else if (item.timelineBucket === 'undated') undatedResults.push(item);
             });
 
@@ -1131,19 +1180,20 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 9,
-                buildVersion: 'timeline-v5.2.2-history-precedence',
+                filterVersion: 10,
+                buildVersion: 'global-drr-v1',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults,
                 mediumTermResults: mediumTermResults,
                 longTermResults: longTermResults,
+                riskContextResults: riskContextResults,
                 undatedResults: undatedResults,
-                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Event and publication dates are kept separate. Dates extracted from article text must match the incident context described by the search result; dates that only mark the start of a wider protest series are not treated as individual incident dates. Relative event dates such as yesterday or a number of days ago are approximate; weekday-only dates are inferred only when an absolute publication date provides a clear preceding weekday anchor, and same-weekday ambiguity remains unconfirmed. A small set of known historical references is date-matched explicitly. Source-page enrichment is best-effort and source text is not independently verified. eventDateUnconfirmedCount tracks results without an event date separately from timeline bucket assignment. searchPass/searchWindow identify the query pass only, not the incident or publication date. Statistical/reference pages and general crime roundups are filtered separately from specific incident reports. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
+                results: recentResults.concat(mediumTermResults, longTermResults, riskContextResults, undatedResults).slice(0, 30),
+                note: 'Search scope is derived from reverse-geocoded municipality, region, and country; it is not hardcoded to Indonesia. Incident reports and structural-risk context (such as prevalence studies or national surveys) use different labels. Structural-risk context is retained separately from live-incident timelines and may be up to ten years old. Publication dates and event dates are kept separate; search-pass labels are not event dates. Unverified reports are awareness leads, not confirmed incidents or precise map points. Missing results are not evidence that an area is safe.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 9, buildVersion: 'timeline-v5.2.2-history-precedence', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 10, buildVersion: 'global-drr-v1', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
