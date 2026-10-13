@@ -448,7 +448,8 @@
         const TINYFISH_PROXY_URL = '';
         let webIntel = [];
         let activeRadarFilter = 'all';
-        let activeFeedFilter = 'all';
+        let activeFeedFilter = 'guide';
+        let safetyMode = 'awareness';
         let usingFallbackLocation = true;
         let selectingRouteDestination = false;
         let routeBusy = false;
@@ -755,7 +756,9 @@
             routeHazardCandidates.forEach(item => { item.dist = calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)); });
             initMap();
             renderMapMarkers();
-            renderFeed(activeFeedFilter || 'all');
+            renderAwarenessOverview();
+            renderSafetyRecommendations();
+            renderFeed(activeFeedFilter || 'guide');
             renderSaved();
             renderRadarSidebar(activeRadarFilter || 'all');
             document.getElementById('loading-overlay').classList.add('hidden');
@@ -800,6 +803,8 @@
             try {
                 await fetchRealData(userLocation.lat, userLocation.lng);
                 renderMapMarkers();
+                renderAwarenessOverview();
+                renderSafetyRecommendations();
                 renderFeed(activeFeedFilter);
                 renderRadarSidebar(activeRadarFilter);
                 renderSaved();
@@ -1147,6 +1152,8 @@
                     : fetched;
                 updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' results', 'ok');
                 renderRadarSidebar(activeRadarFilter);
+                renderAwarenessOverview();
+                renderSafetyRecommendations();
                 renderFeed(activeFeedFilter);
             } catch (error) {
                 console.warn('TinyFish search failed:', error);
@@ -1235,6 +1242,261 @@
         }
 
         // --- UI INTERACTIONS ---
+        function setSafetyMode(mode) {
+            safetyMode = mode === 'navigation' ? 'navigation' : 'awareness';
+            const overview = document.getElementById('awareness-overview');
+            const planner = document.getElementById('route-planner-card');
+            const awarenessButton = document.getElementById('mode-awareness');
+            const navigationButton = document.getElementById('mode-navigation');
+            if (overview) overview.classList.toggle('hidden', false);
+            if (planner) planner.classList.toggle('hidden', safetyMode !== 'navigation');
+            if (awarenessButton) awarenessButton.classList.toggle('active', safetyMode === 'awareness');
+            if (navigationButton) navigationButton.classList.toggle('active', safetyMode === 'navigation');
+
+            if (safetyMode === 'navigation' && journeyPlan) {
+                document.getElementById('route-destination').value = routeDestinationLabel || '';
+                document.getElementById('route-alert-radius').value = String(routeBufferMeters);
+                routePlanOrigin = journeyPlan.origin;
+                routeDestination = journeyPlan.destination;
+                activeJourneyLeg = journeyPlan.activeLeg === 'return' ? 'return' : 'outbound';
+                journeyMode = journeyPlan.mode === 'roundtrip' ? 'roundtrip' : 'oneway';
+                routeOptions = Array.isArray(journeyPlan.routes[activeJourneyLeg]) ? journeyPlan.routes[activeJourneyLeg] : [];
+                selectedRouteIndex = Math.min(Number(journeyPlan.selectedIndexes && journeyPlan.selectedIndexes[activeJourneyLeg]) || 0, Math.max(0, routeOptions.length - 1));
+                updateJourneyControls();
+                if (routeOptions.length && map) applyRouteOption(selectedRouteIndex, true);
+                displaySavedRouteWeather();
+            }
+            if (safetyMode === 'awareness') {
+                setRouteStatus('Awareness mode: browse nearby reports and safety guidance without planning a route.', 'neutral');
+            } else if (!routeOptions.length) {
+                setRouteStatus('Choose a destination to plan a route. Awareness and safety recommendations remain available without a route.', 'neutral');
+            }
+        }
+
+        function currentNearbyHazards(radiusKm = 10) {
+            const hazards = incidents.filter(item =>
+                ['earthquake', 'flood', 'fire_event', 'volcano', 'haze', 'wind', 'disaster', 'global_disaster'].includes(item.type) &&
+                Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)) &&
+                calculateDistance(userLocation.lat, userLocation.lng, Number(item.lat), Number(item.lng)) <= radiusKm
+            );
+            const unique = new Map();
+            hazards.forEach(item => unique.set(String(item.id || item.title), item));
+            return Array.from(unique.values()).sort((a, b) =>
+                calculateDistance(userLocation.lat, userLocation.lng, Number(a.lat), Number(a.lng)) -
+                calculateDistance(userLocation.lat, userLocation.lng, Number(b.lat), Number(b.lng))
+            );
+        }
+
+        function renderAwarenessOverview() {
+            const hazards = currentNearbyHazards(10);
+            const title = document.getElementById('awareness-risk-title');
+            const pill = document.getElementById('awareness-risk-pill');
+            const copy = document.getElementById('awareness-risk-copy');
+            const count = document.getElementById('awareness-signal-count');
+            if (!title || !pill || !copy || !count) return;
+
+            title.textContent = hazards.length ? 'Nearby hazard signals detected' : 'No nearby hazard signals found';
+            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : hazards.length ? ' attention' : '');
+            pill.innerHTML = hazards.length
+                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + hazards.length + (hazards.length === 1 ? ' report' : ' reports')
+                : '<i class="fa-solid fa-eye"></i> Monitoring';
+            if (hazards.length) {
+                const nearest = hazards[0];
+                const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
+                copy.textContent = 'The available feeds contain ' + hazards.length + ' hazard signal(s) within 10 km. Nearest mapped signal: ' +
+                    (nearest.title || nearest.type) + ' (' + nearestKm.toFixed(1) + ' km). Check its timestamp and original source before acting.';
+            } else {
+                copy.textContent = 'No mapped hazard signals were found within 10 km in the currently available feeds. Coverage can be incomplete or delayed; this is not a safety guarantee.';
+            }
+            const onlineSources = ['bmkg','usgs','gdacs','petabencana','osm'].filter(id => {
+                const node = document.getElementById('status-' + id);
+                return node && node.dataset.state === 'ok';
+            }).length;
+            count.textContent = onlineSources + '/5 incident and facility sources responding · ' + webIntel.length + ' web signals';
+        }
+
+        function createRecommendationCard(icon, title, subtitle, tips, actionLabel, actionHandler) {
+            const card = document.createElement('article');
+            card.className = 'recommendation-card';
+            const top = document.createElement('div');
+            top.className = 'flex items-start gap-3';
+            const iconBox = document.createElement('div');
+            iconBox.className = 'recommendation-icon';
+            iconBox.innerHTML = '<i class="fa-solid ' + icon + '"></i>';
+            const headingWrap = document.createElement('div');
+            headingWrap.className = 'flex-1 min-w-0';
+            const heading = document.createElement('h3');
+            heading.className = 'text-sm font-extrabold text-slate-900';
+            heading.textContent = title;
+            const description = document.createElement('p');
+            description.className = 'text-xs text-slate-500 mt-1 leading-relaxed';
+            description.textContent = subtitle;
+            headingWrap.appendChild(heading);
+            headingWrap.appendChild(description);
+            top.appendChild(iconBox);
+            top.appendChild(headingWrap);
+            card.appendChild(top);
+
+            const list = document.createElement('ul');
+            list.className = 'text-xs text-slate-600 mt-3 leading-relaxed';
+            tips.forEach(tip => {
+                const li = document.createElement('li');
+                li.textContent = tip;
+                list.appendChild(li);
+            });
+            card.appendChild(list);
+            if (actionLabel && typeof actionHandler === 'function') {
+                const action = document.createElement('button');
+                action.type = 'button';
+                action.className = 'awareness-action primary mt-2';
+                action.textContent = actionLabel;
+                action.addEventListener('click', actionHandler);
+                card.appendChild(action);
+            }
+            return card;
+        }
+
+        function openNavigationForEscapePlanning() {
+            setSafetyMode('navigation');
+            switchTab('radar');
+            const planner = document.getElementById('route-planner-card');
+            if (planner) {
+                planner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                const input = document.getElementById('route-destination');
+                if (input) input.focus({ preventScroll: true });
+            }
+            setRouteStatus('Choose an official evacuation centre, staffed public facility, or another verified safer destination. CivilAegis cannot certify a location as safe.', 'warning');
+        }
+
+        function renderSafetyRecommendations() {
+            const container = document.getElementById('safety-recommendations');
+            if (!container) return;
+            container.innerHTML = '';
+            const hazards = currentNearbyHazards(10);
+
+            if (hazards.length) {
+                const types = new Set(hazards.map(item => item.type));
+                let title = 'Review the nearby hazard reports';
+                let tips = [
+                    'Open the original source and check when the report was published or updated.',
+                    'Follow instructions from local authorities and emergency services.',
+                    'Do not assume a route is safe just because the map shows no warning.'
+                ];
+                if (types.has('flood')) {
+                    title = 'Flood reports may affect local travel';
+                    tips = [
+                        'Do not walk, ride, or drive through floodwater; depth and current may be hard to judge.',
+                        'Avoid riverbanks, underpasses, and low-lying roads when flooding is reported.',
+                        'Move to higher ground or an official evacuation location when instructed by authorities.'
+                    ];
+                } else if (types.has('fire_event')) {
+                    title = 'Fire-related reports are available nearby';
+                    tips = [
+                        'Move away from smoke and the reported area; do not enter a building to retrieve belongings.',
+                        'Use stairs rather than lifts when evacuating a building.',
+                        'Contact local emergency services and follow evacuation instructions.'
+                    ];
+                } else if (types.has('earthquake')) {
+                    title = 'Earthquake reports are available nearby';
+                    tips = [
+                        'Check official updates and be prepared for aftershocks.',
+                        'Avoid visibly damaged buildings, walls, bridges, and downed electrical lines.',
+                        'If shaking begins indoors, drop, cover, and hold on; evacuate after shaking stops if needed.'
+                    ];
+                }
+                const alert = document.createElement('div');
+                alert.className = 'recommendation-card border-amber-200';
+                alert.appendChild(createRecommendationCard(
+                    'fa-triangle-exclamation',
+                    title,
+                    hazards.length + ' mapped hazard signal(s) are within about 10 km. This is a situational prompt, not an official risk rating.',
+                    tips,
+                    'Plan a route to a verified safer place',
+                    openNavigationForEscapePlanning
+                ));
+                container.appendChild(alert);
+            }
+
+            const cards = [
+                {
+                    icon: 'fa-mobile-screen-button',
+                    title: 'Protect your phone and personal data',
+                    subtitle: 'Reduce opportunistic theft and protect sensitive information.',
+                    tips: [
+                        'Use a strong screen lock and biometrics; set a short auto-lock timeout.',
+                        'Hide message previews and authentication codes on the lock screen.',
+                        'Enable Find My Device or Find My iPhone, keep the phone updated, and back up important data.',
+                        'Avoid handing an unlocked phone to strangers. Step into a staffed shop or security desk if you need help.'
+                    ]
+                },
+                {
+                    icon: 'fa-user-shield',
+                    title: 'Reduce pickpocket and snatch-theft risk',
+                    subtitle: 'Especially useful in crowds, transit hubs, queues, and busy streets.',
+                    tips: [
+                        'Keep your phone and wallet in a zipped front or inside pocket; carry a bag closed and in front in dense crowds.',
+                        'Avoid placing valuables in a back pocket or displaying cash, jewellery, or your phone unnecessarily.',
+                        'Separate your payment card from backup cash and keep only what you need easily accessible.',
+                        'If you suspect surveillance or theft, move calmly toward a staffed, well-lit place. Do not confront or chase a suspected thief.'
+                    ]
+                },
+                {
+                    icon: 'fa-credit-card',
+                    title: 'Protect payment cards from skimming and carding',
+                    subtitle: 'Reduce the chance of card-data theft and unauthorised transactions.',
+                    tips: [
+                        'Cover the keypad when entering your PIN and check card terminals for anything unusual before paying.',
+                        'Never share your PIN, CVV, banking password, or one-time passcode—even with someone claiming to be bank staff.',
+                        'Enable transaction alerts and use spending limits or temporary card locks if your bank offers them.',
+                        'For suspicious transactions, lock the card in your banking app and contact the bank through an official channel immediately.',
+                        'A slim or RFID-blocking wallet does not prevent every form of card fraud; account alerts and safe transaction habits still matter.'
+                    ]
+                },
+                {
+                    icon: 'fa-route',
+                    title: 'Plan exits before you need them',
+                    subtitle: 'A practical escape plan should lead to a verified safer place—not simply the nearest point.',
+                    tips: [
+                        'When entering a large venue, notice the main exit, an alternative exit, and a staffed help point.',
+                        'Agree on a meeting point and share your plan with a trusted person when travelling.',
+                        'For an evacuation, use official routes and designated centres. Avoid choosing a destination only because it is nearby.',
+                        'Do not return to a hazard area to collect possessions. If a route is uncertain, stop in a staffed safe location and contact authorities.'
+                    ],
+                    action: 'Choose a destination and check route reports'
+                },
+                {
+                    icon: 'fa-cloud-rain',
+                    title: 'Prepare for floods and severe weather',
+                    subtitle: 'Rain forecasts and community reports are signals—not confirmation that a road is passable.',
+                    tips: [
+                        'Check current BMKG and local BPBD warnings before departure and again before returning.',
+                        'Never cross floodwater on foot or by vehicle; turn around and seek official guidance.',
+                        'Avoid underpasses, river crossings, and low-lying roads during flood warnings.',
+                        'If instructed to evacuate, move to higher ground by an official or locally confirmed route.'
+                    ]
+                },
+                {
+                    icon: 'fa-bell',
+                    title: 'Use alerts without spreading rumours',
+                    subtitle: 'A news result, community report, and official warning are different kinds of evidence.',
+                    tips: [
+                        'Check the original publication time, location, and source before acting or sharing.',
+                        'TinyFish results are web-search leads; they are not automatically verified incidents or precise map points.',
+                        'If a feed is unavailable or no alert appears, do not infer that the area is safe.',
+                        'Use local emergency services and official instructions for urgent decisions.'
+                    ]
+                }
+            ];
+
+            cards.forEach(item => {
+                container.appendChild(createRecommendationCard(
+                    item.icon, item.title, item.subtitle, item.tips,
+                    item.action ? 'Plan an escape route' : '',
+                    item.action ? openNavigationForEscapePlanning : null
+                ));
+            });
+        }
+
         function switchTab(tabId) {
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 btn.classList.remove('text-primary');
