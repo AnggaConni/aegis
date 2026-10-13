@@ -98,3 +98,10 @@ test('geolocation fallback never triggers a TinyFish current-location search', (
   assert.match(html, /if \(usingFallbackLocation\) \{\s*updateSourceStatus\('tinyfish', 'GPS required for local search'/);
   assert.match(html, /'Outside UK API coverage'/);
 });
+
+
+test('frontend classifies wider gender-based violence context separately from sexual-violence incidents', () => {
+  assert.match(html, /gender based violence|gender\[- \]based violence/);
+  assert.match(html, /Gender-based violence awareness/);
+  assert.match(html, /Use risk studies to inform prevention and access to support/);
+});
