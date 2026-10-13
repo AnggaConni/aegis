@@ -293,10 +293,24 @@ export default {
             const seen = new Set();
             let successfulSearches = 0;
             let rawResultCount = 0;
-            let rejectedNonLocalCount = 0;
+            const diagnostics = {
+                rejectedNonLocalCount: 0,
+                rejectedGenericReferenceCount: 0,
+                rejectedNoSourceUrlCount: 0,
+                duplicateCount: 0,
+                rejectedOutsideFiveYearWindowCount: 0,
+                dateUnconfirmedCount: 0,
+                relativePublicationDateCount: 0,
+                eventDateCount: 0,
+                cityMentionCount: 0,
+                nationalContextCount: 0
+            };
+            const nowMs = Date.now();
+            const oneDayMs = 86400000;
             for (const window of timeWindows) {
                 const scopedQuery = baseQuery + ' Search only for reports ' + window.query +
-                    '. This is the ' + window.label + ' window. Return publication/event date when available.';
+                    '. This label records the search pass only; do not substitute the search pass for an incident date. ' +
+                    'Return separate fields for article publication date and incident/event date if possible. Include the precise city or district only when the source states it.';
                 const searchUrl = new URL('https://api.search.tinyfish.ai/');
                 searchUrl.searchParams.set('query', scopedQuery);
                 const searchResponse = await fetch(searchUrl.toString(), {
@@ -309,13 +323,24 @@ export default {
                 rawResultCount += rawRows.length;
                 rawRows.forEach(function (item) {
                     const targetUrl = item.url || item.link || item.href || '';
-                    if (!/^https?:\/\//i.test(targetUrl)) return;
-                    if (!isLocalIncidentResult(item, localityTerms)) {
-                        rejectedNonLocalCount += 1;
+                    if (!/^https?:\/\//i.test(targetUrl)) {
+                        diagnostics.rejectedNoSourceUrlCount += 1;
                         return;
                     }
+                    const locationAssessment = assessIncidentLocation(item, localityTerms);
+                    if (!locationAssessment.accepted) {
+                        diagnostics.rejectedNonLocalCount += 1;
+                        if (locationAssessment.reason === 'generic-or-foreign-reference') diagnostics.rejectedGenericReferenceCount += 1;
+                        return;
+                    }
+                    diagnostics.cityMentionCount += 1;
+                    if (locationAssessment.scope === 'national-context') diagnostics.nationalContextCount += 1;
+
                     const key = targetUrl.toLowerCase();
-                    if (seen.has(key)) return;
+                    if (seen.has(key)) {
+                        diagnostics.duplicateCount += 1;
+                        return;
+                    }
 
                     const title = String(item.title || item.name || 'Local public-safety report');
                     const snippet = String(item.snippet || item.description || item.content || '');
@@ -329,34 +354,88 @@ export default {
                     else if (/accident|crash|collision|hit-and-run|kecelakaan lalu lintas|laka lantas|tabrakan|kecelakaan beruntun/.test(text)) category = 'road_accident';
                     else if (/flood|inundation|landslide|earthquake|volcan|banjir|tanah longsor|gempa bumi|gunung meletus|kebakaran/.test(text)) category = 'disaster';
 
-                    const rawDate = item.publishedAt || item.published_at || item.date || item.pubDate || null;
-                    let publishedAt = rawDate;
-                    let ageYears = null;
-                    let dateStatus = 'Publication date unconfirmed';
-                    if (rawDate) {
-                        const dateMs = Date.parse(String(rawDate));
-                        if (Number.isFinite(dateMs)) {
-                            ageYears = Math.max(0, (Date.now() - dateMs) / (365.2425 * 24 * 60 * 60 * 1000));
-                            publishedAt = new Date(dateMs).toISOString();
-                            dateStatus = 'Publication date parsed';
-                        } else {
-                            dateStatus = 'Date supplied but not parseable';
-                        }
+                    const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
+                    const publicationParsed = parseDateValue(publicationRaw, nowMs);
+                    const eventParsed = extractEventDate(item, title, snippet, nowMs);
+                    const publicationAgeDays = publicationParsed ? Math.max(0, (nowMs - publicationParsed.dateMs) / oneDayMs) : null;
+                    const eventAgeDays = eventParsed ? Math.max(0, (nowMs - eventParsed.dateMs) / oneDayMs) : null;
+                    const timelineAgeDays = eventAgeDays !== null ? eventAgeDays : publicationAgeDays;
+                    const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
+                    const timelineBucket = timelineAgeDays === null ? 'undated'
+                        : timelineAgeDays <= 30 ? 'recent-30-days'
+                        : timelineAgeDays <= 730.5 ? 'history-30-days-to-2-years'
+                        : timelineAgeDays <= 1826.25 ? 'history-2-to-5-years'
+                        : 'outside-5-year-window';
+
+                    // The incident date takes precedence over publication date. If we only know
+                    // publication age, describe the item as dated coverage, not as a dated incident.
+                    if (timelineBucket === 'outside-5-year-window') {
+                        diagnostics.rejectedOutsideFiveYearWindowCount += 1;
+                        return;
                     }
-                    if (ageYears !== null && ageYears > 5) return;
-                    if (ageYears !== null && ageYears * 365.2425 > window.maxAgeDays + 60) return;
+                    if (!eventParsed && !publicationParsed) diagnostics.dateUnconfirmedCount += 1;
+                    if (publicationParsed && publicationParsed.precision === 'relative-estimate') diagnostics.relativePublicationDateCount += 1;
+                    if (eventParsed) diagnostics.eventDateCount += 1;
+
                     seen.add(key);
                     let source = '';
-                    try { source = new URL(targetUrl).hostname.replace(/^www\\./, ''); } catch (_) {}
+                    try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
+                    const explicitEventLocation = item.eventLocation || item.event_location || item.incidentLocation || item.incident_location || null;
+                    const scopeText = locationAssessment.scope === 'national-context'
+                        ? 'National or multi-location context; not a confirmed incident point in this city'
+                        : locationAssessment.scope === 'city-mentioned-location-unverified'
+                            ? 'City linked to the report; exact place not independently confirmed'
+                            : 'City is mentioned; the specific event location is unclear';
+                    const articlePublishedAt = publicationParsed && publicationParsed.precision !== 'relative-estimate'
+                        ? publicationParsed.iso : null;
+                    const publicationDateLabel = publicationParsed
+                        ? (publicationParsed.precision === 'relative-estimate'
+                            ? 'Publication age estimated from source wording: ' + publicationParsed.relativeLabel
+                            : 'Article published ' + publicationParsed.iso.slice(0, 10))
+                        : 'Publication date unconfirmed';
+                    const eventDateLabel = eventParsed
+                        ? (eventParsed.precision === 'relative-estimate'
+                            ? 'Event date estimated from relative source wording; verify'
+                            : 'Event date mentioned/supplied by search result: ' + eventParsed.iso.slice(0, 10))
+                        : 'Event date unconfirmed';
+                    const recencyLabel = formatAgeLabel(
+                        timelineAgeDays,
+                        timelineBasis,
+                        publicationParsed ? publicationParsed.precision : null
+                    );
                     gathered.push({
-                        id: key, title: title, snippet: snippet, url: targetUrl,
-                        source: source || 'TinyFish Search', area: locality,
-                        publishedAt: publishedAt, ageYears: ageYears,
-                        searchWindow: window.label, dateStatus: dateStatus,
-                        category: category, verified: false,
-                        recencyLabel: ageYears === null ? 'Publication date unconfirmed' :
-                            ageYears <= (30 / 365.2425) ? 'Recent · up to 30 days' :
-                            ageYears <= 2 ? 'Historical · 30 days to 2 years' : 'Historical · 2 to 5 years'
+                        id: key,
+                        title: title,
+                        snippet: snippet,
+                        url: targetUrl,
+                        source: source || 'TinyFish Search',
+                        area: locality,
+                        searchArea: locality,
+                        radiusType: 'municipality/city/regency',
+                        publishedAt: articlePublishedAt,
+                        publishedAtRaw: publicationRaw === null ? null : String(publicationRaw),
+                        publicationDateLabel: publicationDateLabel,
+                        publicationDatePrecision: publicationParsed ? publicationParsed.precision : 'unconfirmed',
+                        publicationAgeDays: publicationAgeDays,
+                        eventDate: eventParsed ? eventParsed.iso : null,
+                        eventDatePrecision: eventParsed ? eventParsed.precision : 'unconfirmed',
+                        eventDateStatus: eventParsed ? eventParsed.status : 'event-date-unconfirmed',
+                        eventDateLabel: eventDateLabel,
+                        eventAgeDays: eventAgeDays,
+                        ageYears: timelineAgeDays === null ? null : timelineAgeDays / 365.2425,
+                        timelineAgeDays: timelineAgeDays,
+                        timelineBasis: timelineBasis,
+                        timelineBucket: timelineBucket,
+                        timelineLabel: recencyLabel,
+                        recencyLabel: recencyLabel,
+                        dateStatus: eventParsed ? eventParsed.status : publicationParsed ? publicationParsed.precision === 'relative-estimate' ? 'Relative publication age estimate; event date unconfirmed' : 'Publication date parsed; event date unconfirmed' : 'Publication and event dates unconfirmed',
+                        searchWindow: window.label,
+                        category: category,
+                        eventLocation: explicitEventLocation ? String(explicitEventLocation) : null,
+                        eventLocationScope: locationAssessment.scope,
+                        eventLocationStatus: locationAssessment.status,
+                        locationEvidence: locationAssessment.reason,
+                        verified: false
                     });
                 });
             }
@@ -366,33 +445,11 @@ export default {
             const longTermResults = [];
             const undatedResults = [];
             gathered.forEach(function (item) {
-                if (item.ageYears === null) undatedResults.push(item);
-                else if (item.ageYears <= (30 / 365.2425)) recentResults.push(item);
-                else if (item.ageYears <= 2) mediumTermResults.push(item);
-                else if (item.ageYears <= 5) longTermResults.push(item);
+                if (item.timelineBucket === 'recent-30-days') recentResults.push(item);
+                else if (item.timelineBucket === 'history-30-days-to-2-years') mediumTermResults.push(item);
+                else if (item.timelineBucket === 'history-2-to-5-years') longTermResults.push(item);
+                else if (item.timelineBucket === 'undated') undatedResults.push(item);
             });
-            const responseBody = {
-                area: locality, radiusType: 'municipality/city/regency',
-                generatedAt: new Date().toISOString(), successfulSearches: successfulSearches,
-                filterVersion: 2, rawResultCount: rawResultCount,
-                rejectedNonLocalCount: rejectedNonLocalCount,
-                recentResults: recentResults.slice(0, 8),
-                mediumTermResults: mediumTermResults.slice(0, 8),
-                longTermResults: longTermResults.slice(0, 8),
-                historicalResults: mediumTermResults.concat(longTermResults).slice(0, 16),
-                undatedResults: undatedResults.slice(0, 8),
-                results: recentResults.concat(mediumTermResults, longTermResults, undatedResults).slice(0, 30),
-                note: 'Only results mentioning the searched city are retained; generic foreign crime-statistics pages are filtered out. TinyFish search/media leads are not independently verified and are not precisely geolocated. Publication dates may differ from incident dates. Verify original sources; historical reports do not imply current danger.'
-            };
-            if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], recentResults: [], historicalResults: [], successfulSearches: 0 }, 502, corsOrigin);
-            }
-            try {
-                const cacheResponse = new Response(JSON.stringify(responseBody), {
-                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' }
-                });
-                ctx.waitUntil(cache.put(cacheKey, cacheResponse));
-            } catch (_) {}
             return jsonResponse(responseBody, 200, corsOrigin);
         } catch (_) {
             return jsonResponse({ error: 'Unable to retrieve local web signals from TinyFish', area: locality, results: [] }, 502, corsOrigin);
