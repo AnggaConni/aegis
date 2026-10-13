@@ -203,7 +203,7 @@ function assessIncidentLocation(item, localityTerms, locality) {
                 ? 'city-mentioned-location-unverified'
                 : 'city-mentioned-context-unclear';
     const status = scope === 'country-context'
-        ? 'Country-level context; this does not confirm an incident at the user's exact location.'
+        ? 'Country-level context; this does not confirm an incident at the current location.'
         : scope === 'national-context'
             ? 'National or multi-location report; exact incident locations are not confirmed.'
             : scope === 'city-mentioned-location-unverified'
