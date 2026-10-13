@@ -40,3 +40,17 @@ test('mobile map collapse control and glowing current-position marker are presen
   assert.match(html, /function createUserLocationIcon\(\)/);
   assert.match(html, /userMarker\.setIcon\(createUserLocationIcon\(\)\)/);
 });
+
+
+test('mobile map toggle wins over the desktop-hidden default rule', () => {
+  assert.match(html, /@media\s*\(max-width:\s*800px\)[\s\S]*?#map-panel \.map-mobile-toggle\s*\{[\s\S]*?display:\s*inline-flex/);
+  assert.match(html, /\.map-mobile-toggle\s*\{\s*display:\s*none;\s*\}/);
+});
+
+test('mobile bottom navigation is compact and radar content scrolls naturally', () => {
+  assert.match(html, /<nav id="bottom-navigation"/);
+  assert.match(html, /#bottom-navigation\s*\{[\s\S]*?height:\s*calc\(54px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(html, /#bottom-navigation \.nav-btn > i/);
+  assert.match(html, /#radar-sidebar\s*\{\s*max-height:\s*none;\s*overflow:\s*visible;/);
+  assert.match(html, /#view-radar\s*\{[\s\S]*?100dvh[\s\S]*?54px/);
+});
