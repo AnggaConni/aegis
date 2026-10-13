@@ -362,6 +362,7 @@
         let userMarker = null;
         let userLocation = { lat: -6.200000, lng: 106.816666 }; // Default Jakarta
         let incidents = [];
+        let routeHazardCandidates = [];
         let savedIncidents = JSON.parse(localStorage.getItem('civilAegisSaved')) || [];
         let markersLayer = null;
         let currentSelectedIncident = null;
@@ -618,7 +619,7 @@
                             const statusText = props.status ? 'Community status: ' + props.status + '. ' : '';
                             const description = [statusText, String(props.text || props.description || '').trim()].filter(Boolean).join(' ');
                             const sourceUrl = safeHttpUrl(props.url) || 'https://petabencana.id/';
-                            const added = addIncidentIfUnique({
+                            const report = {
                                 id: 'petabencana_' + String(props.pkey || props.id || index),
                                 type: normalizedType, title: title,
                                 desc: description || 'Community-submitted disaster report. Verify independently before acting.',
@@ -626,7 +627,10 @@
                                 timeText: formatRelativeTime(timestamp), timestamp: timestamp,
                                 sourceName: 'PetaBencana community report', sourceUrl: sourceUrl,
                                 confidenceLabel: 'Community report · verify independently'
-                            });
+                            };
+                            routeHazardCandidates.push(report);
+                            if (!nearbyToOrigin) return;
+                            const added = addIncidentIfUnique(report);
                             if (added) nearbyCount++;
                         });
                         updateSourceStatus('petabencana', 'Online · ' + nearbyCount + ' nearby', 'ok');
@@ -678,6 +682,9 @@
 
             await Promise.allSettled(tasks);
             incidents.sort((a, b) => a.dist - b.dist);
+        }
+
+cidents.sort((a, b) => a.dist - b.dist);
         }
 
         async function fetchTinyFishIntel(lat, lng) {
@@ -1001,6 +1008,7 @@
                 if (!results.length) throw new Error('Destination not found. Try a more specific place name.');
                 routeDestination = { lat: Number(results[0].lat), lng: Number(results[0].lon) };
                 routeDestinationLabel = results[0].display_name || query;
+                routeBusy = false;
                 await calculateRouteToCoordinates(routeDestination.lat, routeDestination.lng, routeDestinationLabel);
             } catch (error) {
                 console.warn('Destination search failed:', error);
@@ -1070,9 +1078,31 @@
         function getRouteWarnings(coordinates) {
             const input = document.getElementById('route-alert-radius');
             routeBufferMeters = input ? Number(input.value) : 1000;
-            return incidents.filter(isHazardForRouting)
+            const radius = Number.isFinite(routeBufferMeters) && routeBufferMeters > 0 ? routeBufferMeters : 1000;
+            routeBufferMeters = radius;
+            if (!Array.isArray(coordinates) || !coordinates.length) return [];
+
+            let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+            coordinates.forEach(point => {
+                minLng = Math.min(minLng, Number(point[0]));
+                maxLng = Math.max(maxLng, Number(point[0]));
+                minLat = Math.min(minLat, Number(point[1]));
+                maxLat = Math.max(maxLat, Number(point[1]));
+            });
+            const midLat = (minLat + maxLat) / 2;
+            const paddingLat = radius / 110540;
+            const paddingLng = radius / (111320 * Math.max(0.05, Math.cos(midLat * Math.PI / 180)));
+
+            const candidates = new Map();
+            routeHazardCandidates.concat(incidents.filter(isHazardForRouting)).forEach(inc => {
+                if (inc && isHazardForRouting(inc) && inc.id) candidates.set(String(inc.id), inc);
+            });
+
+            return Array.from(candidates.values())
+                .filter(inc => Number(inc.lat) >= minLat - paddingLat && Number(inc.lat) <= maxLat + paddingLat &&
+                    Number(inc.lng) >= minLng - paddingLng && Number(inc.lng) <= maxLng + paddingLng)
                 .map(inc => ({ incident: inc, distance: distanceFromPointToRouteMeters(inc.lat, inc.lng, coordinates) }))
-                .filter(row => row.distance <= routeBufferMeters)
+                .filter(row => row.distance <= radius)
                 .sort((a, b) => a.distance - b.distance);
         }
 
@@ -1410,10 +1440,12 @@
             const hasCoordinates = !!currentSelectedIncident &&
                 Number.isFinite(Number(currentSelectedIncident.lat)) &&
                 Number.isFinite(Number(currentSelectedIncident.lng));
-            routeBtn.disabled = !hasCoordinates;
-            routeBtn.classList.toggle('opacity-50', !hasCoordinates);
-            routeBtn.classList.toggle('cursor-not-allowed', !hasCoordinates);
-
+            if (routeBtn) {
+                const routeEnabled = hasCoordinates && !usingFallbackLocation;
+                routeBtn.disabled = !routeEnabled;
+                routeBtn.classList.toggle('opacity-50', !routeEnabled);
+                routeBtn.classList.toggle('cursor-not-allowed', !routeEnabled);
+            }
             if (!currentSelectedIncident) {
                 btn.innerHTML = '<i class="fa-regular fa-bookmark mr-1"></i> Save';
                 btn.disabled = true;
