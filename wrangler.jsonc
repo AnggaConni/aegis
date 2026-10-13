@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "civilaegis-tinyfish-proxy",
+  "main": "tinyfish-worker.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true
+}

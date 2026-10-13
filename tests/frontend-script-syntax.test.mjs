@@ -16,18 +16,20 @@ test('inline JavaScript in the frontend parses successfully', () => {
     if (/\bsrc\s*=/.test(attributes)) continue;
     if (/\btype\s*=\s*["'](?:application\/(?:ld\+)?json|importmap|text\/template)["']/i.test(attributes)) continue;
 
-    const filename = 'index.html:inline-script-' + (index + 1);
-    try {
-      new vm.Script(source, { filename });
-    } catch (error) {
-      error.message = filename + ': ' + error.message;
-      throw error;
-    }
+    new vm.Script(source, { filename: 'index.html:inline-script-' + (index + 1) });
     checked += 1;
   }
 
   assert.ok(checked > 0, 'expected at least one inline JavaScript block to validate');
 });
+
+test('frontend merges combined and bucket feeds and removes duplicate rows', () => {
+  assert.match(html, /const bucketRows = \(payload\.recentResults \|\| \[\]\)\.concat/);
+  assert.match(html, /const sourceRows = \(Array\.isArray\(payload\.results\) \? payload\.results : \[\]\)\.concat\(bucketRows\)/);
+  assert.match(html, /const seenRows = new Set\(\)/);
+  assert.match(html, /if \(!stableKey \|\| seenRows\.has\(stableKey\)\) return false/);
+});
+
 
 test('mobile map collapse control and glowing current-position marker are present', () => {
   assert.match(html, /id="mobile-map-toggle"/);
@@ -76,9 +78,8 @@ test('mobile detail panel is compact and reserves layout space rather than float
 });
 
 
-test('free-only mode removes the paid news proxy and rejects legacy cached news', () => {
-  assert.doesNotMatch(html, /TINYFISH_PROXY_URL|fetchTinyFishIntel|civilaegis-tinyfish-proxy/);
-  assert.match(html, /webIntel = \[\];/);
-  assert.match(html, /Disabled · free mode/);
-  assert.match(html, /News & OSINT search is disabled in Free Mode/);
+test('free TinyFish Search runs only through the protected Worker endpoint', () => {
+  assert.match(html, /const TINYFISH_PROXY_URL = 'https:\/\/[^']+\/nearby-intel'/);
+  assert.match(html, /fetchTinyFishIntel\(userLocation\.lat, userLocation\.lng/);
+  assert.doesNotMatch(html, /TINYFISH_API_KEY\s*=/);
 });

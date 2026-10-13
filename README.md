@@ -1,45 +1,57 @@
 # CivilAegis
 
-CivilAegis is a static, browser-based personal-safety awareness map and route-planning PWA.
+CivilAegis is a static, browser-based personal-safety awareness map and route-planning PWA with an optional TinyFish Search integration for local-news awareness.
 
-## Free-only architecture
+## Architecture
 
-This repository build does not require TinyFish, a paid search API key, Cloudflare Workers, or a backend service. The frontend loads public feeds directly from the browser. Public services can change availability, rate limits, and terms; this project does not guarantee those services will always be available.
+- **Frontend:** static HTML, Tailwind CSS, Leaflet, and browser storage; deployable on GitHub Pages.
+- **TinyFish Search:** free web-search API used to find local reports. The current published free limits are 30 Search requests/minute and 500/hour.
+- **Cloudflare Worker:** a lightweight proxy that keeps `TINYFISH_API_KEY` out of public browser code, validates inputs/origins, caches results, filters/deduplicates news leads, and exposes date/location confidence labels.
+- **Other public data feeds:** BMKG, USGS, GDACS, PetaBencana, OpenStreetMap/Overpass, Open-Meteo, OSRM public demo, and the UK Police API where supported.
+
+TinyFish Search and Fetch are currently listed as free; paid Agent/Browser services are separate. Always check the current [TinyFish pricing page](https://www.tinyfish.ai/pricing). Cloudflare Workers Free currently lists 100,000 inbound requests/day; see [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
 
 ## Features
 
-- Leaflet-based map and nearby public-safety/disaster signals
-- GPS location when permission is granted, with an explicit fallback state
+- Interactive map and GPS location (permission required)
+- Nearby public hazard and disaster feeds
+- Local-news search leads with publication/event dates, source URLs, approximate search area, and unverified-status labels
 - One-way and round-trip driving route planning
-- Route corridor warnings based on the data currently available to the app
-- Saved reports and locally stored trip plans
-- PDF export for saved reports
+- Route corridor checks against currently available mapped hazard data
+- Saved reports, trip plans, and PDF export
 - PWA shell and selected vendor-resource caching for limited offline use
 
-## Data sources and limitations
+## Safety and data limitations
 
-The frontend integrates public sources including BMKG, USGS, GDACS, PetaBencana, OpenStreetMap/Overpass, Open-Meteo, OSRM's public demo service, and the UK Police API where supported.
+News search results are leads, not independently verified incident reports. Mentioning a city does not provide exact incident coordinates. Event dates and article publication dates are kept separate; an undated or historically dated result must not be treated as a current alert. Historical news is context, not evidence of active danger.
 
-Coverage, freshness, and geographic precision vary by provider. The UK Police API does not provide Indonesian crime incidents. This free-only build disables external local-news/OSINT search, so it does not provide TinyFish-powered local news results.
+The UK Police API does not provide Indonesian crime incidents. Public feed availability, data coverage, rate limits, and terms can change. A missing report is **not evidence that an area is safe**. Cached data and saved routes can become stale, and live data/new routes require connectivity. CivilAegis is an awareness aid, not an emergency dispatch system or an official warning source.
 
-A missing report is **not evidence that an area is safe**. Cached reports and saved routes can become stale; live feeds and new routes require connectivity. This is an awareness aid, not an emergency dispatch system or a source of official warnings. In an emergency, follow instructions from local authorities.
+## Configure TinyFish and Cloudflare Worker
+
+1. Create a TinyFish account and copy its API key from the official dashboard.
+2. Deploy `tinyfish-worker.js` to Cloudflare Workers using `wrangler.jsonc` or a Git-connected Worker project.
+3. In Worker Settings → Variables and Secrets, add `TINYFISH_API_KEY` as a **secret** and `ALLOWED_ORIGINS` as a plain variable set to `https://anggaconni.github.io`.
+4. Confirm the Worker endpoint ends in `/nearby-intel`.
+5. Set `TINYFISH_PROXY_URL` in `index.html` to that endpoint and deploy the static site.
+
+**Never put the TinyFish API key in `index.html`, a public JSON file, a GitHub Pages build, or any other client-side asset.** GitHub Actions secrets can be used only by workflows that explicitly reference them; they do not act as private runtime variables for a static website. See [GitHub's Actions secret documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+
+The Worker includes a best-effort per-isolate request guard and response caching. Isolate-local rate limits are not a globally atomic quota; for higher-risk public exposure, add a Cloudflare edge rate-limiting rule and monitor usage.
 
 ## Run locally
 
-Serve this folder through a local static HTTP server or deploy it with GitHub Pages. Geolocation and service-worker features require a secure context (HTTPS, or localhost in local development). No API secret needs to be placed in the frontend.
+Serve the repository through a local static HTTP server or deploy it via GitHub Pages. Browser geolocation and service-worker features require HTTPS or localhost.
 
-## Checks
+## Tests
 
-The GitHub Actions workflow checks the service-worker syntax and runs the frontend regression tests:
+The GitHub Actions workflow checks Worker and service-worker syntax, frontend inline JavaScript syntax, and Worker regression tests:
 
 ```sh
+node --check --input-type=module < tinyfish-worker.js
 node --check sw.js
-node --test tests/frontend-script-syntax.test.mjs
+node --test tests/*.test.mjs
 ```
-
-## Privacy and secrets
-
-The app uses browser geolocation only to center the map and query relevant public feeds. Do not commit API keys to this public repository or inject them into client-side JavaScript: anything shipped to the browser can be inspected by visitors. GitHub Actions secrets are available to workflows that explicitly reference them, not as private runtime configuration for a static GitHub Pages frontend.
 
 ## License
 
