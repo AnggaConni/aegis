@@ -105,3 +105,28 @@ test('frontend classifies wider gender-based violence context separately from se
   assert.match(html, /Gender-based violence awareness/);
   assert.match(html, /Use risk studies to inform prevention and access to support/);
 });
+
+
+test('news categories trigger topic-specific prevention guidance and linked source reports', () => {
+  assert.match(html, /function renderNewsDrivenRecommendations\(container\)/);
+  assert.match(html, /classifySafetyText\(String\(article\.title \|\| ''\) \+ ' ' \+ String\(article\.snippet \|\| ''\)\)/);
+  assert.match(html, /Personal safety guidance: sexual-violence reports/);
+  assert.match(html, /Safety guidance: bombing and explosion reports/);
+  assert.match(html, /Prevention guidance: theft and snatch theft/);
+  assert.match(html, /Related source reports/);
+  assert.match(html, /Review related news/);
+  assert.match(html, /if \(webIntel\.length\) renderNewsDrivenRecommendations\(container\)/);
+});
+
+test('context-specific advice does not frame historical or structural-risk results as active incidents', () => {
+  assert.match(html, /Based on a prevalence study or wider risk assessment/);
+  assert.match(html, /Historical incident context\. It can inform preparedness, but it does not establish that the incident is active now/);
+  assert.match(html, /The source date is unconfirmed\. Check the original report and current local guidance/);
+  assert.match(html, /perpetrators are responsible for abuse/);
+});
+
+
+test('specific sexual-violence language takes precedence over broader gender-based context', () => {
+  assert.match(html, /Classify specific sexual-violence reports before the broader GBV category/);
+  assert.match(html, /return 'sexual_violence';[\s\S]*?return 'gender_based_violence';/);
+});

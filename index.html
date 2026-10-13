@@ -1768,8 +1768,9 @@
             if (/(fire|building blaze|burning building|smoke plume|kebakaran)/.test(text)) return 'fire';
             if (/(earthquake|aftershock|seismic|gempa bumi|gunung meletus|tanah longsor)/.test(text)) return 'earthquake';
             if (/(carding|card skimm|atm skimm|credit.card fraud|debit.card fraud|payment fraud|banking fraud|phishing|financial scam|online scam|penipuan|skimming|investasi bodong)/.test(text)) return 'fraud';
-            if (/(gender[- ]based violence|violence against women|violence against girls|intimate partner violence|domestic violence|kekerasan berbasis gender|kekerasan terhadap perempuan|kekerasan dalam rumah tangga)/.test(text)) return 'gender_based_violence';
+            // Classify specific sexual-violence reports before the broader GBV category.
             if (/(pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan|rape|sexual assault|sexual violence|sexual harassment)/.test(text)) return 'sexual_violence';
+            if (/(gender[- ]based violence|violence against women|violence against girls|intimate partner violence|domestic violence|kekerasan berbasis gender|kekerasan terhadap perempuan|kekerasan dalam rumah tangga)/.test(text)) return 'gender_based_violence';
             if (/(murder|homicide|pembunuhan|korban tewas|meninggal dunia|tewas dalam|fatal stabbing|fatal shooting)/.test(text)) return 'homicide';
             if (/(riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh)/.test(text)) return 'unrest';
             if (/(pickpocket|pick pocket|snatch theft|phone snatching|bag snatching|mugging|robbery|robbed|theft|stolen phone|stolen wallet|burglary|shoplifting|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor)/.test(text)) return 'theft';
@@ -2134,6 +2135,214 @@
             setRouteStatus('Choose an official evacuation centre, staffed public facility, or another verified safer destination. CivilAegis cannot certify a location as safe.', 'warning');
         }
 
+        function getNewsRecommendationContext(article) {
+            const bucket = getWebIntelTimelineBucket(article);
+            const scope = article && article.eventLocationScope;
+            const geography = ['country-context', 'national-context'].includes(scope)
+                ? ' This is broader geographic context, not proof of a risk at this exact street or address.'
+                : scope === 'city-mentioned-context-unclear'
+                    ? ' The locality is mentioned, but the exact event location is unclear.'
+                    : '';
+            if (article && (article.evidenceType === 'structural-risk' || bucket === 'risk-context')) {
+                return 'Based on a prevalence study or wider risk assessment. Use it to inform prevention; it does not mean an incident is happening now.' + geography;
+            }
+            if (bucket === 'undated') {
+                return 'The source date is unconfirmed. Check the original report and current local guidance; do not interpret this result as a live alert.' + geography;
+            }
+            if (bucket === 'history-30-days-to-2-years' || bucket === 'history-2-to-5-years') {
+                return 'Historical incident context. It can inform preparedness, but it does not establish that the incident is active now.' + geography;
+            }
+            return 'A recently dated search result mentions this topic. Check the event date, original source, and current official updates before making time-sensitive decisions.' + geography;
+        }
+
+        function getNewsGuidance(category) {
+            const guidance = {
+                sexual_violence: {
+                    icon: 'fa-user-shield',
+                    title: 'Personal safety guidance: sexual-violence reports',
+                    tips: [
+                        'Choose routes and public spaces where you feel safer; when practical, favour well-lit, populated routes and staffed venues.',
+                        'You may share your route or expected arrival with a trusted person if that is useful to you.',
+                        'If you feel followed or threatened, move toward a staffed public place and contact local emergency or specialist support. Do not confront the person.',
+                        'These steps are precautionary, not a transfer of responsibility to potential victims; perpetrators are responsible for abuse.'
+                    ]
+                },
+                gender_based_violence: {
+                    icon: 'fa-hand-holding-heart',
+                    title: 'Prevention guidance: gender-based violence context',
+                    tips: [
+                        'Use credible prevalence studies to understand the types of support and prevention that may be needed; check the study population, period, and geography.',
+                        'Identify trusted contacts and appropriate local specialist-support services before they are needed.',
+                        'For an immediate threat, prioritize reaching a staffed safe place and contacting local emergency or specialist services.',
+                        'A population-level pattern must not be used to label every person or neighbourhood as dangerous.'
+                    ]
+                },
+                explosion_or_blast: {
+                    icon: 'fa-triangle-exclamation',
+                    title: 'Safety guidance: bombing and explosion reports',
+                    tips: [
+                        'For a historical report, use it as security-awareness context—not evidence of an active attack—and check current official advisories.',
+                        'If a credible current incident is reported nearby, move away from the affected area and follow police and emergency-service instructions.',
+                        'Do not touch suspicious objects or debris. From a safe place, report an immediate threat to the appropriate authorities.'
+                    ]
+                },
+                theft: {
+                    icon: 'fa-person-walking-arrow-right',
+                    title: 'Prevention guidance: theft and snatch theft',
+                    tips: [
+                        'Keep your phone and wallet secured in zipped or inside pockets; carry bags closed and in front in dense crowds.',
+                        'Avoid displaying valuables unnecessarily and stay aware around transit queues and crowded exits.',
+                        'If you suspect surveillance or theft, move calmly to a staffed place. Do not chase or confront a suspected thief.'
+                    ]
+                },
+                fraud: {
+                    icon: 'fa-credit-card',
+                    title: 'Prevention guidance: scams and payment fraud',
+                    tips: [
+                        'Never share a PIN, CVV, banking password, or one-time passcode, even with someone claiming to be bank staff.',
+                        'Open banking services through the official app or number, not links supplied by unexpected messages.',
+                        'Enable transaction alerts; lock a card and contact the bank through its official channel if you spot an unauthorized transaction.'
+                    ]
+                },
+                unrest: {
+                    icon: 'fa-people-group',
+                    title: 'Safety guidance: unrest and violent clashes',
+                    tips: [
+                        'Check current official updates before entering areas where a gathering or clash may still be active.',
+                        'Avoid confrontations, active crowds, and police cordons; identify an alternative route and a staffed place to seek help.',
+                        'Follow local-authority instructions. A historical protest report alone is not evidence that unrest is happening now.'
+                    ]
+                },
+                homicide: {
+                    icon: 'fa-shield-halved',
+                    title: 'Personal safety guidance: fatal-violence reports',
+                    tips: [
+                        'Check the original report and precise location before changing plans; historical cases do not establish current danger.',
+                        'If there is a current threat, leave the immediate area if safe to do so, move to a staffed public place, and contact local emergency services.',
+                        'Avoid confrontations and do not share unverified names, images, or rumours.'
+                    ]
+                },
+                violence: {
+                    icon: 'fa-shield-halved',
+                    title: 'Personal safety guidance: violence-related reports',
+                    tips: [
+                        'Check whether the report is historical or current and whether it actually relates to the area you plan to visit.',
+                        'Prefer routes with accessible staffed public places when you feel unsafe; avoid confronting a suspected aggressor.',
+                        'For an immediate threat, move to safety and contact appropriate local support or emergency services.'
+                    ]
+                },
+                crime: {
+                    icon: 'fa-shield-halved',
+                    title: 'Prevention guidance: crime-related reports',
+                    tips: [
+                        'Read the source and location details before adapting your plans; a city mention is not an exact incident location.',
+                        'Keep valuables secured and choose staffed public places if you feel unsafe.',
+                        'Report immediate threats to local authorities; do not treat an unverified headline as proof of current danger.'
+                    ]
+                },
+                accident: {
+                    icon: 'fa-car-burst',
+                    title: 'Travel safety guidance: road-accident reports',
+                    tips: [
+                        'Check current road conditions and local traffic or emergency-service updates before travelling.',
+                        'Do not stop in a live traffic lane to watch or photograph an incident.',
+                        'If you are at the scene, stay out of moving traffic and contact emergency services from a safe place.'
+                    ]
+                },
+                flood: {
+                    icon: 'fa-cloud-rain',
+                    title: 'Travel safety guidance: flood reports',
+                    tips: [
+                        'Never walk, ride, or drive through floodwater; depth, current, and road damage can be hard to judge.',
+                        'Check current local disaster-agency and weather guidance, especially before returning to a low-lying area.',
+                        'Use official evacuation routes and designated centres when instructed; the nearest mapped facility is not automatically a safe shelter.'
+                    ]
+                },
+                fire: {
+                    icon: 'fa-fire',
+                    title: 'Safety guidance: fire and smoke reports',
+                    tips: [
+                        'If a fire may be active nearby, move away from smoke and the affected area; do not re-enter to retrieve belongings.',
+                        'Follow emergency-service instructions and use stairs rather than lifts when evacuating a building.',
+                        'Check current local updates; an older fire story does not mean there is a fire now.'
+                    ]
+                },
+                earthquake: {
+                    icon: 'fa-house-crack',
+                    title: 'Preparedness guidance: earthquake and ground hazards',
+                    tips: [
+                        'Review official local hazard guidance and know where to take cover or move after shaking stops.',
+                        'After an earthquake, avoid visibly damaged buildings and downed utility lines; follow official instructions.',
+                        'A historical event supports preparedness but is not a forecast of when the next event will occur.'
+                    ]
+                }
+            };
+            return guidance[category] || null;
+        }
+
+        function renderNewsDrivenRecommendations(container) {
+            const groups = new Map();
+            webIntel.forEach(article => {
+                const category = classifySafetyText(String(article.title || '') + ' ' + String(article.snippet || ''));
+                if (category === 'general') return;
+                if (!groups.has(category)) groups.set(category, []);
+                groups.get(category).push(article);
+            });
+
+            const sortRank = article => {
+                const bucket = getWebIntelTimelineBucket(article);
+                if (article.evidenceType === 'structural-risk' || bucket === 'risk-context') return 4;
+                if (bucket === 'recent-30-days') return 0;
+                if (bucket === 'history-30-days-to-2-years') return 1;
+                if (bucket === 'history-2-to-5-years') return 2;
+                return 3;
+            };
+            const ordered = Array.from(groups.entries())
+                .map(([category, articles]) => ({
+                    category,
+                    articles: articles.sort((a, b) => sortRank(a) - sortRank(b))
+                }))
+                .sort((a, b) => sortRank(a.articles[0]) - sortRank(b.articles[0]) || b.articles.length - a.articles.length)
+                .slice(0, 4);
+
+            ordered.forEach(({ category, articles }) => {
+                const guidance = getNewsGuidance(category);
+                if (!guidance) return;
+                const top = articles[0];
+                const card = createRecommendationCard(
+                    guidance.icon,
+                    guidance.title,
+                    articles.length + ' related result(s). ' + getNewsRecommendationContext(top),
+                    guidance.tips,
+                    'Review related news (' + articles.length + ')',
+                    () => {
+                        switchTab('feed');
+                        filterFeed('news', document.getElementById('feed-filter-news'));
+                    }
+                );
+                card.classList.add('border-blue-200');
+
+                const sources = document.createElement('div');
+                sources.className = 'border-t border-slate-100 mt-3 pt-2';
+                const label = document.createElement('p');
+                label.className = 'text-[10px] uppercase tracking-wide font-bold text-slate-500 mb-1';
+                label.textContent = 'Related source reports';
+                sources.appendChild(label);
+                articles.slice(0, 3).forEach(article => {
+                    if (!article.url) return;
+                    const link = document.createElement('a');
+                    link.href = article.url;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.className = 'block text-xs text-blue-700 underline py-1';
+                    link.textContent = (article.title || 'Open source report') + ' · ' + (article.source || 'Source');
+                    sources.appendChild(link);
+                });
+                card.appendChild(sources);
+                container.appendChild(card);
+            });
+        }
+
         function renderSafetyRecommendations() {
             const container = document.getElementById('safety-recommendations');
             if (!container) return;
@@ -2199,6 +2408,11 @@
                     }
                 ));
             }
+
+            // Add evidence-triggered guidance before the always-available evergreen safety cards.
+            // The cards are based on all matched news leads, grouped by topic, not only the single
+            // signal selected for the compact Personal Safety Overview panel.
+            if (webIntel.length) renderNewsDrivenRecommendations(container);
 
             const cards = [
                 {
