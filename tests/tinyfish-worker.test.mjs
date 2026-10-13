@@ -228,8 +228,8 @@ test('known Amnesty reference to the January 2016 Jakarta attack is excluded by 
   const url = 'https://amnesty.org.nz/indonesia-vicious-jakarta-attack-shows-utter-contempt-human-life';
   const body = await runWorker([
     [{
-      title: 'Indonesia: Vicious Jakarta attack shows utter contempt for human life',
-      snippet: 'A series of bomb blasts and shootings that rocked Jakarta this morning killed at least seven people.',
+      title: 'Indonesia: Vicious Jakarta attack shows utter contempt for ...',
+      snippet: 'A series of bomb blasts and shootings that rocked Jakarta yesterday killed at least seven people, five of whom were suspected attackers.',
       url
     }],
     [],
