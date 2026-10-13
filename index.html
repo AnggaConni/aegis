@@ -1166,7 +1166,10 @@
                 const response = await fetchWithTimeout(requestUrl.toString(), { headers: { 'Accept': 'application/json' } });
                 if (!response.ok) throw new Error('TinyFish proxy HTTP ' + response.status);
                 const payload = await response.json();
-                const rows = Array.isArray(payload.results) ? payload.results : [];
+                const rows = Array.isArray(payload.results) ? payload.results :
+                    Array.isArray(payload.recentResults) || Array.isArray(payload.historicalResults)
+                        ? (payload.recentResults || []).concat(payload.historicalResults || [])
+                        : [];
                 const fetched = rows.map((row, index) => ({
                     id: String(row.id || 'tinyfish_' + index),
                     title: String(row.title || 'Local news signal'),
@@ -1176,6 +1179,10 @@
                     area: String(row.area || localityLabel || 'Approximate search area'),
                     contextLabel: String(localityLabel || 'Current location'),
                     publishedAt: row.publishedAt || row.published_at || null,
+                    ageYears: Number.isFinite(Number(row.ageYears)) ? Number(row.ageYears) : null,
+                    recencyLabel: String(row.recencyLabel || ''),
+                    searchWindow: String(row.searchWindow || ''),
+                    category: String(row.category || classifySafetyText(String(row.title || '') + ' ' + String(row.snippet || ''))),
                     verified: false
                 })).filter(row => row.url);
                 webIntel = append
@@ -1185,6 +1192,7 @@
                 renderRadarSidebar(activeRadarFilter);
                 renderAwarenessOverview();
                 renderSafetyRecommendations();
+                renderPersonalizedRecommendation();
                 renderFeed(activeFeedFilter);
             } catch (error) {
                 console.warn('TinyFish search failed:', error);
@@ -1462,9 +1470,15 @@
             const localWebSignals = webIntel.filter(article =>
                 !article.contextLabel || /current location|nearby|current area/i.test(article.contextLabel)
             );
-            const relevantArticle = localWebSignals.find(article =>
-                classifySafetyText(article.title + ' ' + article.snippet) !== 'general'
-            );
+            const relevantArticle = localWebSignals
+                .filter(article => classifySafetyText(article.title + ' ' + article.snippet) !== 'general')
+                .sort((a, b) => {
+                    const ageA = Number.isFinite(Number(a.ageYears)) ? Number(a.ageYears) : 99;
+                    const ageB = Number.isFinite(Number(b.ageYears)) ? Number(b.ageYears) : 99;
+                    const recencyA = ageA <= (30 / 365.2425) ? 0 : ageA <= 1 ? 1 : ageA <= 2 ? 2 : 3;
+                    const recencyB = ageB <= (30 / 365.2425) ? 0 : ageB <= 1 ? 1 : ageB <= 2 ? 2 : 3;
+                    return recencyA - recencyB;
+                })[0];
             if (relevantArticle) {
                 return {
                     category: classifySafetyText(relevantArticle.title + ' ' + relevantArticle.snippet),
