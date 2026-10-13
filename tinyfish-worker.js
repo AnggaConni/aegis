@@ -437,6 +437,8 @@ export default {
 
         try {
             const gathered = [];
+            const rejectedOutOfWindowKeys = new Set();
+            const rejectedOutOfWindowFingerprints = new Set();
             let successfulSearches = 0;
             const failedSearchWindows = [];
             let rawResultCount = 0;
@@ -485,6 +487,13 @@ export default {
                     }
                     const title = String(item.title || item.name || 'Local public-safety report');
                     const snippet = String(item.snippet || item.description || item.content || '');
+                    const earlyDedupeKey = canonicalizeSourceUrl(targetUrl);
+                    const earlyFingerprint = makeContentFingerprint(title, snippet);
+                    if (rejectedOutOfWindowKeys.has(earlyDedupeKey) ||
+                        (earlyFingerprint && rejectedOutOfWindowFingerprints.has(earlyFingerprint))) {
+                        diagnostics.duplicateCount += 1;
+                        return;
+                    }
                     const combined = (title + ' ' + snippet).toLowerCase();
                     let category = 'public_safety';
                     if (/explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak/.test(combined)) category = 'explosion_or_blast';
@@ -506,6 +515,18 @@ export default {
                     const timelineBasis = eventAgeDays !== null ? 'event-date' : publicationAgeDays !== null ? 'publication-date-proxy' : 'undated';
                     const timelineBucket = bucketForParsedDate(timelineAgeDays, timelineParsed, nowMs);
                     if (timelineBucket === 'outside-5-year-window') {
+                        const rejectedKey = canonicalizeSourceUrl(targetUrl);
+                        const rejectedFingerprint = makeContentFingerprint(title, snippet);
+                        rejectedOutOfWindowKeys.add(rejectedKey);
+                        if (rejectedFingerprint) rejectedOutOfWindowFingerprints.add(rejectedFingerprint);
+                        const earlierDuplicateIndex = gathered.findIndex(entry =>
+                            entry.dedupeKey === rejectedKey ||
+                            (rejectedFingerprint && entry.fingerprint && entry.fingerprint === rejectedFingerprint)
+                        );
+                        if (earlierDuplicateIndex >= 0) {
+                            gathered.splice(earlierDuplicateIndex, 1);
+                            diagnostics.duplicateCount += 1;
+                        }
                         diagnostics.rejectedOutsideFiveYearWindowCount += 1;
                         return;
                     }
