@@ -721,7 +721,7 @@ export default {
 
         try {
             const gathered = [];
-            const sourceFetchBudget = { remaining: 10, attempts: 0 };
+            const sourceFetchBudget = { remaining: 16, attempts: 0 };
             const rejectedOutOfWindowKeys = new Set();
             const rejectedOutOfWindowFingerprints = new Set();
             let successfulSearches = 0;
