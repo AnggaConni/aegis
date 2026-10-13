@@ -13,9 +13,9 @@ The Worker runs three separate searches:
 
 Topics include murder/homicide, sexual assault/rape, riots and fatal clashes, pickpocketing/snatching, robbery, theft, scams/card fraud, road accidents, and disasters. It prefers official sources and established local newsrooms. Results retain a source link, approximate area, publication-date status, category, and search-window label where available.
 
-The five-year range is a search horizon, **not a guarantee of comprehensive coverage**. Search may miss incidents. A source's publication date can differ from the event date. Undated results must remain explicitly undated rather than being assigned a confident age. Search results are leads for awareness, not confirmed incident records.
+The five-year range is a search horizon, **not a guarantee of comprehensive coverage**. Search may miss incidents. Publication date and event date are stored separately. If only publication age is known, the historical/recent bucket refers to the article's date, not a confirmed incident date. Undated results remain in their own section and are never assumed to be current. Year-only, month-only, and relative dates are explicitly labelled approximate. Search results are leads for awareness, not confirmed incident records.
 
-The Worker also applies a municipality-name relevance check to every result. It rejects generic foreign crime-statistics/reference pages and retains only items whose title, snippet, or source URL mentions the searched city/regency. This is a precision safeguard, not proof that all retained reports occurred there; the original source must still be checked. The response includes `rawResultCount` and `rejectedNonLocalCount` so search quality can be diagnosed.
+The Worker applies a municipality-name relevance check to the title and snippet; a city name that appears only in a URL is not sufficient. It distinguishes `city-mentioned-location-unverified`, `city-mentioned-context-unclear`, and `national-context`. These are scope hints, not verified incident coordinates. Diagnostics report duplicate items, missing source URLs, generic/foreign references rejected, out-of-window items rejected, undated items, and failed search windows.
 
 ## Personalized recommendation
 
