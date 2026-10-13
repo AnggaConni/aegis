@@ -84,8 +84,8 @@ function assessIncidentLocation(item, localityTerms) {
     const city = localityTerms.find(term => !term.startsWith('daerah khusus ibukota')) || matchedTerm;
     const escapedCity = city.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
     const explicitLocalContext = new RegExp(
-        '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?' + escapedCity + '\\b|' +
-        '\\b' + escapedCity + '\\s+(?:attacks?|murders?|homicides?|rapes?|robberies|riots?|clashes|protests?|floods?|fires?|accidents?|pickpocketing|snatching|crime|kerusuhan|pembunuhan|pemerkosaan|pencopetan|penjambretan|kecelakaan|banjir|kebakaran)\\b)',
+        '(?:\\b(?:in|at|near|around|within|across|di|ke|dari|sekitar|wilayah|kawasan)\\s+(?:the\\s+)?#?' + escapedCity + '\\b|' +
+        '\\b' + escapedCity + '(?:\\s*[:,-]\\s*|\\s+)(?:at least \\d+ (?:people )?(?:dead|killed)|attacks?|murders?|homicides?|rapes?|robberies|riots?|clashes|protests?|blasts?|explosions?|bombings?|floods?|fires?|accidents?|pickpocketing|snatching|crime|kerusuhan|pembunuhan|pemerkosaan|pencopetan|penjambretan|kecelakaan|ledakan|pengeboman|banjir|kebakaran)\\b)',
         'i'
     ).test(contentText);
 
@@ -372,8 +372,9 @@ export default {
                     const snippet = String(item.snippet || item.description || item.content || '');
                     const combined = (title + ' ' + snippet).toLowerCase();
                     let category = 'public_safety';
-                    if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(combined)) category = 'sexual_violence';
-                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(combined)) category = 'homicide_or_fatality';
+                    if (/explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak/.test(combined)) category = 'explosion_or_blast';
+                    else if (/rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan/.test(combined)) category = 'sexual_violence';
+                    else if (/murder|homicide|killed|dead after|people dead|fatal stabbing|fatal shooting|fatal clash|pembunuhan|korban tewas|meninggal dunia|tewas dalam/.test(combined)) category = 'homicide_or_fatality';
                     else if (/riot|unrest|mob violence|clash|communal violence|kerusuhan|tawuran|bentrokan|bentrok|ricuh/.test(combined)) category = 'unrest';
                     else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone|pencopetan|copet|penjambretan|jambret|perampokan|pencurian|begal|curanmor/.test(combined)) category = 'theft';
                     else if (/scam|fraud|card skimming|carding|phishing|penipuan|skimming|investasi bodong|penipuan online/.test(combined)) category = 'scam_or_fraud';
