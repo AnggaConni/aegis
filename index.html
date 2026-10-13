@@ -709,7 +709,6 @@
         }
 
         function updateSaveButtonUI() {
-            if (!currentSelectedIncident) return;
             const btn = document.getElementById('btn-save');
             if (!currentSelectedIncident) {
                 btn.innerHTML = '<i class="fa-regular fa-bookmark mr-1"></i> Save';
