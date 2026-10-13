@@ -96,6 +96,19 @@
         .marker-disaster { background-color:#b45309; }
         .marker-global-disaster { background-color:#be123c; }
         .route-planner { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin:0 0 10px; }
+        .safety-mode-switch { display:flex; gap:6px; padding:4px; border:1px solid #e2e8f0; background:#f8fafc; border-radius:10px; margin-bottom:9px; }
+        .safety-mode-btn { flex:1; border:1px solid transparent; border-radius:7px; background:transparent; color:#64748b; padding:8px 5px; font-size:10px; font-weight:800; }
+        .safety-mode-btn.active { color:#1d4ed8; background:#fff; border-color:#bfdbfe; box-shadow:0 1px 2px rgba(15,23,42,.05); }
+        .awareness-overview { border:1px solid #e2e8f0; background:linear-gradient(135deg,#fff 0%,#f8fafc 100%); border-radius:12px; padding:11px; margin-bottom:10px; }
+        .awareness-risk-pill { display:inline-flex; align-items:center; gap:5px; border-radius:999px; padding:4px 8px; font-size:9px; font-weight:800; background:#f1f5f9; color:#475569; }
+        .awareness-risk-pill.attention { background:#fff7ed; color:#9a3412; }
+        .awareness-risk-pill.alert { background:#fef2f2; color:#991b1b; }
+        .awareness-action { border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:7px 9px; font-size:10px; font-weight:800; }
+        .awareness-action.primary { border-color:#2563eb; background:#2563eb; color:#fff; }
+        .recommendation-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px; box-shadow:0 1px 2px rgba(15,23,42,.03); }
+        .recommendation-icon { display:flex; width:36px; height:36px; border-radius:10px; align-items:center; justify-content:center; flex:0 0 auto; color:#1d4ed8; background:#eff6ff; }
+        .recommendation-card ul { padding-left:17px; list-style:disc; }
+        .recommendation-card li { margin:5px 0; }
         .route-input { width:100%; min-width:0; border:1px solid #cbd5e1; border-radius:9px; padding:9px 10px; font-size:11px; outline:none; background:#fff; color:#0f172a; }
         .route-input:focus { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.12); }
         .route-mini-btn { border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:7px 9px; font-size:10px; font-weight:700; }
@@ -237,7 +250,27 @@
                             </div>
                         </div>
 
-                        <section class="route-planner" aria-label="Route planner">
+                        <div class="safety-mode-switch" role="group" aria-label="CivilAegis mode">
+                            <button id="mode-awareness" class="safety-mode-btn active" type="button" onclick="setSafetyMode('awareness')"><i class="fa-solid fa-eye mr-1"></i>Awareness</button>
+                            <button id="mode-navigation" class="safety-mode-btn" type="button" onclick="setSafetyMode('navigation')"><i class="fa-solid fa-route mr-1"></i>Plan a route</button>
+                        </div>
+
+                        <section id="awareness-overview" class="awareness-overview" aria-live="polite">
+                            <div class="flex items-start justify-between gap-2">
+                                <div>
+                                    <p class="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Personal safety overview</p>
+                                    <p id="awareness-risk-title" class="text-sm font-extrabold text-slate-900 mt-1">Checking available signals…</p>
+                                </div>
+                                <span id="awareness-risk-pill" class="awareness-risk-pill"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
+                            </div>
+                            <p id="awareness-risk-copy" class="text-[10px] text-slate-600 leading-relaxed mt-2">Monitor nearby incident reports and local safety information without creating a route.</p>
+                            <div class="flex items-center justify-between gap-2 mt-2">
+                                <span id="awareness-signal-count" class="text-[9px] font-semibold text-slate-500">Checking available feeds</span>
+                                <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">Safety recommendations <i class="fa-solid fa-arrow-right ml-1"></i></button>
+                            </div>
+                        </section>
+
+                        <section id="route-planner-card" class="route-planner hidden" aria-label="Route planner">
                             <div class="flex items-center justify-between gap-2 mb-2">
                                 <p class="text-[11px] font-extrabold text-slate-900"><i class="fa-solid fa-route text-blue-600 mr-1"></i> Route Planner</p>
                                 <span class="text-[9px] font-bold text-blue-700 bg-blue-100 rounded px-2 py-1">DRIVING BETA</span>
@@ -334,11 +367,13 @@
                 <i class="fa-solid fa-list-ul text-primary"></i> Live Intel Feed
             </h2>
             
+            <p class="text-sm text-slate-500 -mt-2 mb-4">Safety guidance and local signals. Recommendations are in English and do not replace official instructions.</p>
             <div class="flex gap-2 overflow-x-auto pb-4 mb-2 no-scrollbar">
-                <button onclick="filterFeed('all', this)" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">All</button>
-                <button onclick="filterFeed('earthquake', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Earthquakes</button>
-                <button onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Safe Zones</button>
-                <button onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">News &amp; OSINT</button>
+                <button id="feed-filter-guide" onclick="filterFeed('guide', this)" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">Recommendations</button>
+                <button id="feed-filter-all" onclick="filterFeed('all', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">All signals</button>
+                <button id="feed-filter-incidents" onclick="filterFeed('incidents', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Incident reports</button>
+                <button id="feed-filter-news" onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">News &amp; OSINT</button>
+                <button id="feed-filter-safe" onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Emergency services</button>
             </div>
 
             <div id="feed-container" class="flex flex-col gap-3"></div>
