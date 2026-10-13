@@ -15,6 +15,8 @@ Topics include murder/homicide, sexual assault/rape, riots and fatal clashes, pi
 
 The five-year range is a search horizon, **not a guarantee of comprehensive coverage**. Search may miss incidents. A source's publication date can differ from the event date. Undated results must remain explicitly undated rather than being assigned a confident age. Search results are leads for awareness, not confirmed incident records.
 
+The Worker also applies a municipality-name relevance check to every result. It rejects generic foreign crime-statistics/reference pages and retains only items whose title, snippet, or source URL mentions the searched city/regency. This is a precision safeguard, not proof that all retained reports occurred there; the original source must still be checked. The response includes `rawResultCount` and `rejectedNonLocalCount` so search quality can be diagnosed.
+
 ## Personalized recommendation
 
 Immediately below Personal Safety Overview, the app classifies nearby mapped hazards and TinyFish local search results into themes such as theft/pickpocketing, payment-card fraud, road accidents, floods, fires, and earthquakes. Recommendations include practical next steps and distances to the nearest mapped police station, hospital, or fire station when OpenStreetMap provides those points. Facility opening status and whether it is an appropriate destination are not verified.
