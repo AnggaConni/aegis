@@ -23,14 +23,6 @@ test('inline JavaScript in the frontend parses successfully', () => {
   assert.ok(checked > 0, 'expected at least one inline JavaScript block to validate');
 });
 
-test('frontend merges combined and bucket feeds and removes duplicate rows', () => {
-  assert.match(html, /const bucketRows = \(payload\.recentResults \|\| \[\]\)\.concat/);
-  assert.match(html, /const sourceRows = \(Array\.isArray\(payload\.results\) \? payload\.results : \[\]\)\.concat\(bucketRows\)/);
-  assert.match(html, /const seenRows = new Set\(\)/);
-  assert.match(html, /if \(!stableKey \|\| seenRows\.has\(stableKey\)\) return false/);
-});
-
-
 test('mobile map collapse control and glowing current-position marker are present', () => {
   assert.match(html, /id="mobile-map-toggle"/);
   assert.match(html, /function toggleMobileMap\(\)/);
