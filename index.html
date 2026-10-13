@@ -995,10 +995,15 @@
             setRouteStatus('Refreshing public reports. Existing route will be rechecked against the new feed…', 'neutral');
             try {
                 await fetchRealData(userLocation.lat, userLocation.lng);
-                await Promise.allSettled([
-                    fetchTinyFishIntel(userLocation.lat, userLocation.lng, 'Current location'),
-                    fetchCrimeApi(userLocation.lat, userLocation.lng)
-                ]);
+                if (usingFallbackLocation) {
+                    updateSourceStatus('tinyfish', 'GPS required for local search', 'neutral');
+                    updateSourceStatus('crimeapi', 'GPS required', 'neutral');
+                } else {
+                    await Promise.allSettled([
+                        fetchTinyFishIntel(userLocation.lat, userLocation.lng, 'Current location'),
+                        fetchCrimeApi(userLocation.lat, userLocation.lng)
+                    ]);
+                }
                 saveSafetySnapshot();
                 renderMapMarkers();
                 renderAwarenessOverview();
@@ -1336,6 +1341,7 @@
                 const bucketRows = (payload.recentResults || []).concat(
                     payload.mediumTermResults || [],
                     payload.longTermResults || [],
+                    payload.riskContextResults || [],
                     payload.undatedResults || []
                 );
                 // Merge the combined feed with all bucket entries. Older Worker builds may cap
@@ -1372,6 +1378,7 @@
                     timelineAgeDays: row.timelineAgeDays !== null && row.timelineAgeDays !== undefined && Number.isFinite(Number(row.timelineAgeDays)) ? Number(row.timelineAgeDays) : null,
                     timelineBasis: String(row.timelineBasis || 'undated'),
                     timelineBucket: String(row.timelineBucket || 'undated'),
+                    evidenceType: String(row.evidenceType || 'incident'),
                     timelineLabel: String(row.timelineLabel || row.recencyLabel || 'Date unconfirmed'),
                     recencyLabel: String(row.recencyLabel || row.timelineLabel || 'Date unconfirmed'),
                     searchPass: String(row.searchPass || row.searchWindow || ''),
@@ -1422,7 +1429,7 @@
             if (!isSupportedPoliceApiArea(Number(lat), Number(lng))) {
                 incidents = incidents.filter(item => item.type !== 'crime');
                 routeHazardCandidates = routeHazardCandidates.filter(item => item.type !== 'crime');
-                updateSourceStatus('crimeapi', 'No Indonesia public feed', 'neutral');
+                updateSourceStatus('crimeapi', 'Outside UK API coverage', 'neutral');
                 return;
             }
             updateSourceStatus('crimeapi', 'Checking UK records…', 'neutral');
@@ -1731,7 +1738,7 @@
         }
 
         function getWebIntelTimelineBucket(article) {
-            if (article && ['recent-30-days', 'history-30-days-to-2-years', 'history-2-to-5-years', 'undated'].includes(article.timelineBucket)) {
+            if (article && ['recent-30-days', 'history-30-days-to-2-years', 'history-2-to-5-years', 'risk-context', 'undated'].includes(article.timelineBucket)) {
                 return article.timelineBucket;
             }
             if (!article || article.ageYears === null || article.ageYears === undefined || article.ageYears === '' || !Number.isFinite(Number(article.ageYears))) {
@@ -1746,9 +1753,10 @@
 
         function getWebIntelScopeLabel(article) {
             const scope = article && article.eventLocationScope;
-            if (scope === 'national-context') return 'National context · not a confirmed local incident';
-            if (scope === 'city-mentioned-location-unverified') return 'City-linked report · exact location unverified';
-            if (scope === 'city-mentioned-context-unclear') return 'City mentioned · event location unclear';
+            if (scope === 'country-context') return 'Country-level context · not a precise local incident';
+            if (scope === 'national-context') return 'National or multi-location context · exact location unconfirmed';
+            if (scope === 'city-mentioned-location-unverified') return 'Locality-linked report · exact location unverified';
+            if (scope === 'city-mentioned-context-unclear') return 'Locality mentioned · event location unclear';
             return 'Location unconfirmed';
         }
 
@@ -1785,6 +1793,7 @@
             );
             const rank = article => {
                 const bucket = getWebIntelTimelineBucket(article);
+                if (article.evidenceType === 'structural-risk' || bucket === 'risk-context') return 4;
                 if (bucket === 'recent-30-days') return 0;
                 if (bucket === 'history-30-days-to-2-years') return 1;
                 if (bucket === 'history-2-to-5-years') return 2;
@@ -1857,22 +1866,29 @@
         function getWebSignalRecommendationContext(article) {
             const bucket = getWebIntelTimelineBucket(article);
             const scope = article && article.eventLocationScope;
-            const locationText = scope === 'national-context'
-                ? 'The source discusses a national or multi-location event and mentions this city; it does not confirm a specific incident at your current location.'
-                : scope === 'city-mentioned-context-unclear'
-                    ? 'The city is mentioned in the article, but the exact event location is unclear.'
-                    : 'The result links the city to the topic, but the exact incident location has not been independently confirmed.';
+            const locationText = scope === 'country-context'
+                ? 'This is country-level evidence, not proof of an incident at your exact neighbourhood or current location.'
+                : scope === 'national-context'
+                    ? 'The source describes national or multi-location context; it does not confirm an incident at your exact current location.'
+                    : scope === 'city-mentioned-context-unclear'
+                        ? 'The locality is mentioned, but the exact event location is unclear.'
+                        : 'The result is geographically relevant, but the exact incident location has not been independently confirmed.';
+
+            if (article && (article.evidenceType === 'structural-risk' || bucket === 'risk-context')) {
+                return 'This is structural-risk context (for example, a prevalence study or national survey), not an alert that an incident is happening now. It can inform proportionate prevention. Check the source, publication date, study period, and population covered. ' + locationText;
+            }
             if (bucket === 'undated') {
-                return 'TinyFish found a relevant search result, but its publication/event date could not be confirmed. Do not treat it as a current alert. ' + locationText;
+                return 'The search result may be relevant, but its publication/event date could not be confirmed. Treat it as context for manual review, not as proof of a current incident. ' + locationText;
             }
             if (bucket === 'history-30-days-to-2-years' || bucket === 'history-2-to-5-years') {
                 return 'This is historical awareness context. ' + (article.timelineLabel || article.recencyLabel || 'The result has an older date') + '. ' +
                     (article.timelineBasis === 'event-date'
-                        ? 'An event date is supplied by the result, but should still be checked at the original source.'
-                        : 'Only the article publication date is available; the event date is unconfirmed.') + ' ' + locationText;
+                        ? 'The source provides an event date, which should still be checked against the original report.'
+                        : 'The publication date is known, but the event date is unconfirmed.') +
+                    ' A historical incident can inform preparedness, but it does not prove an active incident now. ' + locationText;
             }
             return 'TinyFish returned a recently dated article related to ' + String(article.category || 'public safety') +
-                '. Recent publication does not prove the incident happened recently. ' + locationText;
+                '. A recent publication date does not prove the event itself is recent. ' + locationText;
         }
 
         function renderPersonalizedRecommendation() {
@@ -1911,8 +1927,16 @@
                     tips.push('Share your trip or arrival time with a trusted contact if that helps you feel safer. You do not owe anyone an explanation for changing your route.');
                     tips.push('If you feel followed or threatened, enter a staffed public place and contact local emergency services or police. Do not confront the person.');
                 } else if (category === 'explosion_or_blast') {
-                    tips.push('This source is undated. Do not treat it as evidence of an active incident; open the original report and check current official updates.');
-                    tips.push('If an explosion is currently reported nearby, move away from the affected area and follow police and emergency-service instructions.');
+                    const historyBucket = signal && ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(signal.item));
+                    const undatedSource = !signal || getWebIntelTimelineBucket(signal.item) === 'undated';
+                    if (undatedSource) {
+                        tips.push('The source date is unconfirmed. Use it as a prompt to check the original report and current official guidance, not as evidence of an active incident.');
+                    } else if (historyBucket || (signal && signal.item.evidenceType === 'structural-risk')) {
+                        tips.push('This is historical context, not evidence of an active attack. Use it to understand the local security context and take proportionate precautions.');
+                    } else {
+                        tips.push('Check current official updates to establish whether the reported event is still affecting the area.');
+                    }
+                    tips.push('If a credible current report indicates an explosion nearby, move away from the affected area and follow police and emergency-service instructions.');
                     tips.push('Do not touch suspicious objects or debris. From a safe place, contact local emergency services if there is an active threat.');
                 } else if (category === 'homicide' || category === 'unrest') {
                     tips.push('Check the date, exact reported location, and current official updates. A historical case does not mean the area is currently dangerous.');
@@ -1983,9 +2007,10 @@
             titleNode.textContent = heading;
             tagNode.className = 'personalized-label';
             tagNode.textContent = signal ? (signal.kind === 'crimeApi' ? 'HISTORICAL DATA' :
-                signal.kind === 'web' ? (getWebIntelTimelineBucket(signal.item) === 'undated' ? 'DATE UNCONFIRMED' :
+                signal.kind === 'web' ? (signal.item.evidenceType === 'structural-risk' || getWebIntelTimelineBucket(signal.item) === 'risk-context' ? 'RISK CONTEXT' :
+                    getWebIntelTimelineBucket(signal.item) === 'undated' ? 'DATE UNCONFIRMED' :
                     getWebIntelTimelineBucket(signal.item).startsWith('history') ? 'HISTORICAL CONTEXT' :
-                    signal.item.eventLocationScope === 'national-context' ? 'NATIONAL CONTEXT' : 'VERIFY SOURCE') :
+                    signal.item.eventLocationScope === 'national-context' || signal.item.eventLocationScope === 'country-context' ? 'WIDER AREA CONTEXT' : 'VERIFY SOURCE') :
                 'MAPPED REPORT') : 'GENERAL';
             if (signal && signal.kind === 'web') tagNode.classList.add('attention');
             copyNode.textContent = summary;
@@ -2154,8 +2179,8 @@
             if (webIntel.length) {
                 container.appendChild(createRecommendationCard(
                     'fa-newspaper',
-                    'Local news signals are available',
-                    webIntel.length + ' web result(s) can help you monitor the area, but search results are not verified incident records.',
+                    'Local news and risk-context signals are available',
+                    webIntel.length + ' result(s) include incident reports and/or wider risk context. Use historical cases and prevalence studies to inform prevention, not as proof that an incident is active now.',
                     [
                         'Open the source and confirm the publication date, event location, and whether the information is still current.',
                         'Do not treat a headline alone as proof that a location is dangerous or that an evacuation is required.',
@@ -2315,9 +2340,12 @@
             document.getElementById('incident-detail-panel').setAttribute('data-selection-state', 'selected');
             document.getElementById('detail-title').textContent = article.title || 'Local news signal';
             document.getElementById('detail-desc').textContent = (article.snippet || 'No summary supplied.') +
-                ' This is a search/media lead, not an independently verified incident. No exact coordinates are asserted.';
+                (article.evidenceType === 'structural-risk'
+                    ? ' This is risk/prevalence context, not an incident alert. Review the study method and publication date before applying it to the current location.'
+                    : ' This is a search/media lead, not an independently verified incident. No exact coordinates are asserted.');
             document.getElementById('detail-category').textContent = 'TINYFISH · ' +
-                String(article.category || 'public safety').replace(/_/g, ' ').toUpperCase() + ' · UNVERIFIED';
+                String(article.category || 'public safety').replace(/_/g, ' ').toUpperCase() +
+                (article.evidenceType === 'structural-risk' ? ' · RISK CONTEXT' : ' · UNVERIFIED');
             setDetailSource(article.source || 'TinyFish Search result', article.url);
             document.getElementById('detail-distance').textContent = 'Search area: ' + (article.searchArea || article.area || 'approximate') +
                 (article.eventLocation ? ' · Reported event location: ' + article.eventLocation : '') +
@@ -2456,8 +2484,9 @@
             const showWeb = filterType === 'all' || filterType === 'news';
             const recent = showWeb ? webIntel.filter(article => getWebIntelTimelineBucket(article) === 'recent-30-days') : [];
             const historical = showWeb ? webIntel.filter(article => ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(article))) : [];
+            const riskContext = showWeb ? webIntel.filter(article => article.evidenceType === 'structural-risk' || getWebIntelTimelineBucket(article) === 'risk-context') : [];
             const undated = showWeb ? webIntel.filter(article => getWebIntelTimelineBucket(article) === 'undated') : [];
-            const webCount = recent.length + historical.length + undated.length;
+            const webCount = recent.length + historical.length + riskContext.length + undated.length;
             document.getElementById('intel-count').textContent = (filtered.length + webCount) + ((filtered.length + webCount) === 1 ? ' item' : ' items');
 
             if (!filtered.length && !webCount) {
@@ -2493,7 +2522,8 @@
 
             renderRadarWebSection(container, 'Recently dated results · event dates may differ', recent, '#b45309');
             renderRadarWebSection(container, 'Historical awareness · not live alerts', historical, '#64748b');
-            renderRadarWebSection(container, 'Date unconfirmed · not assumed to be current', undated, '#64748b');
+            renderRadarWebSection(container, 'Risk context & prevalence · not live incident reports', riskContext, '#0f766e');
+            renderRadarWebSection(container, 'Date unconfirmed · context for manual review', undated, '#64748b');
         }
 
         function filterRadarSidebar(type, button) {
@@ -3119,6 +3149,7 @@
             if (showWeb) {
                 const recent = webIntel.filter(article => getWebIntelTimelineBucket(article) === 'recent-30-days');
                 const historical = webIntel.filter(article => ['history-30-days-to-2-years', 'history-2-to-5-years'].includes(getWebIntelTimelineBucket(article)));
+                const riskContext = webIntel.filter(article => article.evidenceType === 'structural-risk' || getWebIntelTimelineBucket(article) === 'risk-context');
                 const undated = webIntel.filter(article => getWebIntelTimelineBucket(article) === 'undated');
 
                 const addHeading = (text, color) => {
@@ -3136,8 +3167,12 @@
                     addHeading('Historical awareness · date basis shown on each item · not live alerts', '#475569');
                     historical.forEach(article => container.appendChild(createWebIntelCard(article, true, false)));
                 }
+                if (riskContext.length) {
+                    addHeading('Risk context & prevalence · informs prevention, not live incident alerts', '#0f766e');
+                    riskContext.forEach(article => container.appendChild(createWebIntelCard(article, true, false)));
+                }
                 if (undated.length) {
-                    addHeading('Date unconfirmed · not assumed to be a current alert', '#64748b');
+                    addHeading('Date unconfirmed · context for manual review', '#64748b');
                     undated.forEach(article => container.appendChild(createWebIntelCard(article, false, true)));
                 }
             }
@@ -3167,7 +3202,8 @@
             const meta = document.createElement('p');
             meta.className = 'text-[10px] font-semibold mt-2';
             meta.style.color = historical || undated ? '#64748b' : '#b45309';
-            meta.textContent = (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
+            meta.textContent = (article.evidenceType === 'structural-risk' ? 'Risk/prevalence context · not a live incident · ' : '') +
+                (article.timelineLabel || article.recencyLabel || 'Date unconfirmed') + ' · ' +
                 getWebIntelScopeLabel(article) + ' · ' + (article.source || 'TinyFish Search') +
                 (undated ? ' · Manual review only — not a current alert' : '');
 
