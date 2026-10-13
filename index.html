@@ -144,7 +144,7 @@
         .brand-symbol i { font-size:16px; }
         .brand-wordmark { font-size:17px; font-weight:800; line-height:1; letter-spacing:.035em; color:#0f172a; white-space:nowrap; }
         #gps-status { min-height:30px; border:1px solid #dcfce7; border-radius:999px; background:#f0fdf4; padding:0 9px; }
-        #gps-text { font-size:10px; letter-spacing:.01em; color:#15803d !important; }
+        #gps-text, #gps-status span:last-child { font-size:10px; letter-spacing:.01em; color:#15803d !important; }
         #header-account-button { width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b; transition:background .15s ease,border-color .15s ease; }
         #header-account-button:hover { background:#eff6ff; border-color:#bfdbfe; }
 
@@ -156,13 +156,13 @@
             .brand-wordmark { font-size:15px; letter-spacing:.02em; }
             #app-header > div:last-child { gap:7px !important; }
             #gps-status { min-height:27px; padding:0 7px; gap:5px; }
-            #gps-text { font-size:9px; }
+            #gps-text, #gps-status span:last-child { font-size:9px !important; }
             #gps-status .animate-ping { display:none; }
             #header-account-button { width:29px; height:29px; }
             #awareness-overview { padding:9px 10px; margin-bottom:8px; border-radius:11px; }
             #awareness-overview #awareness-risk-title { font-size:12px; line-height:1.25; margin-top:3px; }
             #awareness-overview #awareness-risk-copy { font-size:10px; line-height:1.35; margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-            #awareness-overview > .flex:last-of-type { align-items:center; gap:8px; margin-top:7px; }
+            #awareness-actions-row { align-items:center; gap:8px; margin-top:7px !important; }
             #awareness-signal-count { font-size:9px; line-height:1.3; flex:1 1 auto; min-width:0; }
             #awareness-overview .awareness-action { flex:0 0 auto; max-width:132px; min-height:30px; padding:6px 8px; font-size:9px; line-height:1.1; white-space:nowrap; border-radius:8px; }
             #awareness-overview .awareness-action i { margin-left:3px !important; }
@@ -465,7 +465,7 @@
                                 <span id="awareness-risk-pill" class="awareness-risk-pill"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
                             </div>
                             <p id="awareness-risk-copy" class="text-[10px] text-slate-600 leading-relaxed mt-2">Monitor nearby incident reports and local safety information without creating a route. This is an information overview, not a certified area risk assessment.</p>
-                            <div class="flex items-center justify-between gap-2 mt-2">
+                            <div id="awareness-actions-row" class="flex items-center justify-between gap-2 mt-2">
                                 <span id="awareness-signal-count" class="text-[9px] font-semibold text-slate-500">Checking available feeds</span>
                                 <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">View tailored tips <i class="fa-solid fa-arrow-right ml-1"></i></button>
                             </div>
