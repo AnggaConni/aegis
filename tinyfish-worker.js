@@ -178,11 +178,13 @@ function parseDateValue(value, nowMs) {
         return { iso: new Date(ms).toISOString(), dateMs: ms, precision: 'relative-estimate', ageDays: 1, raw: raw, relativeLabel: 'approximately 1 day ago' };
     }
 
-    const relative = relativeText.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
-    const abbreviated = relativeText.match(/\b(\d+(?:\.\d+)?)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
+    const relative = relativeText.match(/\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?)\s+ago\b/);
+    const abbreviated = relativeText.match(/\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*(d|wk|wks|mo|yr|yrs)\s*ago\b/);
     const match = relative || abbreviated;
     if (match) {
-        const amount = Number(match[1]);
+        const wordNumbers = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+        const amountToken = String(match[1]).toLowerCase();
+        const amount = Number.isFinite(Number(amountToken)) ? Number(amountToken) : wordNumbers[amountToken];
         const unit = match[2];
         const multiplier = /^min|^minute/.test(unit) ? 1 / 1440
             : /^hour|^hr/.test(unit) ? 1 / 24
@@ -310,7 +312,7 @@ function extractEventDate(item, title, snippet, nowMs, publicationAnchor) {
     const text = String(title || '') + ' ' + String(snippet || '');
     const month = '(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)';
     const date = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\s+' + month + '\\s+\\d{4}|' + month + '\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4}|(?:19|20)\\d{2})';
-    const relativeDate = '(?:today|just now|moments ago|yesterday|\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?|d|wk|wks|mo|yr|yrs)\\s+ago)';
+    const relativeDate = '(?:today|just now|moments ago|yesterday|(?:\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mos?|years?|yrs?|d|wk|wks|mo|yr|yrs)\\s+ago)';
     const weekday = '(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)';
     const eventWords = '(?:attacks?|bombings?|blasts?|explosions?|explosive device|murders?|homicides?|fatal assaults?|sexual assaults?|rapes?|robberies|thefts?|shootings?|stabbings?|riots?|unrest|clashes?|protests?|floods?|fires?|accidents?|crashes?|landslides?|earthquakes?|kerusuhan|bentrokan|tawuran|ledakan|pengeboman|pembunuhan|pemerkosaan|penjambretan|pencurian|perampokan|kecelakaan|banjir|kebakaran|tanah longsor|tewas|meninggal dunia)';
     const eventAction = '(?:occurred|happened|took place|was reported|was killed|were killed|killed|died|was run over|were run over|run over|was attacked|were attacked|attacked|was shot|were shot|shot|was stabbed|were stabbed|stabbed|was raped|was robbed|robbed|was assaulted|were assaulted|assaulted|was arrested|were arrested|arrested|terjadi|tewas|meninggal|menewaskan|dibunuh|ditabrak|diserang|ditembak|dibacok)';
@@ -322,7 +324,7 @@ function extractEventDate(item, title, snippet, nowMs, publicationAnchor) {
     const relativeBeforeAction = new RegExp('\\b(' + relativeDate + ')\\b[^.!?]{0,80}\\b' + eventAction + '\\b', 'i');
     const weekdayBeforeAction = new RegExp('\\b(?:on|last)\\s+(' + weekday + ')\\b[^.!?]{0,100}\\b' + eventAction + '\\b', 'i');
 
-    const sentences = text.split(/(?<=[.!?])\\s+/).filter(Boolean);
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
     const nonSeriesText = [];
     for (const sentence of sentences) {
         if (isSeriesStartDateSentence(sentence)) continue;
