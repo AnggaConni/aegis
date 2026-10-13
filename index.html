@@ -137,7 +137,39 @@
         .route-warning-note { font-size:9px; line-height:1.45; color:#92400e; margin-top:7px; }
         .leaflet-control-attribution { font-size: 10px; background: rgba(255,255,255,0.88) !important; padding: 2px 5px !important; }
 
+        /* Refined app chrome and smaller mobile overview cards. */
+        #app-header { height:58px; padding-inline:16px; background:rgba(255,255,255,.97); backdrop-filter:blur(14px); }
+        .brand-lockup { display:flex; align-items:center; gap:9px; min-width:0; }
+        .brand-symbol { width:32px; height:32px; display:flex; align-items:center; justify-content:center; border-radius:10px; color:#fff; background:linear-gradient(145deg,#3b82f6,#1d4ed8); box-shadow:0 3px 8px rgba(37,99,235,.17); flex:0 0 auto; }
+        .brand-symbol i { font-size:16px; }
+        .brand-wordmark { font-size:17px; font-weight:800; line-height:1; letter-spacing:.035em; color:#0f172a; white-space:nowrap; }
+        #gps-status { min-height:30px; border:1px solid #dcfce7; border-radius:999px; background:#f0fdf4; padding:0 9px; }
+        #gps-text, #gps-status span:last-child { font-size:10px; letter-spacing:.01em; color:#15803d !important; }
+        #header-account-button { width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:#f8fafc; color:#64748b; transition:background .15s ease,border-color .15s ease; }
+        #header-account-button:hover { background:#eff6ff; border-color:#bfdbfe; }
+
         @media (max-width: 800px) {
+            #app-header { height:52px; min-height:52px; padding-inline:12px; gap:9px; box-shadow:0 1px 5px rgba(15,23,42,.04); }
+            .brand-lockup { gap:7px; }
+            .brand-symbol { width:29px; height:29px; border-radius:9px; }
+            .brand-symbol i { font-size:14px; }
+            .brand-wordmark { font-size:15px; letter-spacing:.02em; }
+            #app-header > div:last-child { gap:7px !important; }
+            #gps-status { min-height:27px; padding:0 7px; gap:5px; }
+            #gps-text, #gps-status span:last-child { font-size:9px !important; }
+            #gps-status .animate-ping { display:none; }
+            #header-account-button { width:29px; height:29px; }
+            #awareness-overview { padding:9px 10px; margin-bottom:8px; border-radius:11px; }
+            #awareness-overview #awareness-risk-title { font-size:12px; line-height:1.25; margin-top:3px; }
+            #awareness-overview #awareness-risk-copy { font-size:10px; line-height:1.35; margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+            #awareness-actions-row { align-items:center; gap:8px; margin-top:7px !important; }
+            #awareness-signal-count { font-size:9px; line-height:1.3; flex:1 1 auto; min-width:0; }
+            #awareness-overview .awareness-action { flex:0 0 auto; max-width:132px; min-height:30px; padding:6px 8px; font-size:9px; line-height:1.1; white-space:nowrap; border-radius:8px; }
+            #awareness-overview .awareness-action i { margin-left:3px !important; }
+            #awareness-risk-pill { padding:4px 7px; font-size:8px; white-space:nowrap; flex:0 0 auto; }
+            .personalized-recommendation { padding:9px; margin-bottom:8px; border-radius:11px; }
+            .recommendation-card { padding:11px; border-radius:11px; }
+            .recommendation-icon { width:31px; height:31px; border-radius:9px; }
             body > main { min-height: 0; overflow: hidden; }
             #mobile-detail-host { display: block; flex: 0 0 auto; padding: 5px 8px 0; background: #f8fafc; }
             #view-radar { height: 100%; min-height: 0; overflow-y: auto !important; overflow-x: hidden !important; padding-bottom: 8px; }
@@ -355,10 +387,10 @@
 <body class="antialiased flex flex-col h-screen">
 
     <!-- Top Header -->
-    <header class="h-[60px] bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20 shadow-sm">
-        <div class="flex items-center gap-2">
-            <i class="fa-solid fa-shield-halved text-primary text-xl"></i>
-            <h1 class="text-lg font-bold tracking-wider text-slate-800">CIVIL<span class="text-primary">AEGIS</span></h1>
+    <header id="app-header" class="h-[60px] bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20 shadow-sm">
+        <div class="brand-lockup">
+            <span class="brand-symbol" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></span>
+            <h1 class="brand-wordmark">CIVIL<span class="text-primary">AEGIS</span></h1>
         </div>
         <div class="flex items-center gap-3 text-sm">
             <div id="gps-status" class="flex items-center gap-1 text-warning">
@@ -368,8 +400,8 @@
                 </span>
                 <span id="gps-text" class="font-medium text-slate-600">Acquiring Signal...</span>
             </div>
-            <button class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 shadow-sm hover:bg-slate-200 transition">
-                <i class="fa-solid fa-user text-slate-500 text-xs"></i>
+            <button id="header-account-button" type="button" aria-label="Account and settings" title="Account and settings" class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 shadow-sm hover:bg-slate-200 transition">
+                <i class="fa-solid fa-user text-xs"></i>
             </button>
         </div>
     </header>
@@ -433,9 +465,9 @@
                                 <span id="awareness-risk-pill" class="awareness-risk-pill"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
                             </div>
                             <p id="awareness-risk-copy" class="text-[10px] text-slate-600 leading-relaxed mt-2">Monitor nearby incident reports and local safety information without creating a route. This is an information overview, not a certified area risk assessment.</p>
-                            <div class="flex items-center justify-between gap-2 mt-2">
+                            <div id="awareness-actions-row" class="flex items-center justify-between gap-2 mt-2">
                                 <span id="awareness-signal-count" class="text-[9px] font-semibold text-slate-500">Checking available feeds</span>
-                                <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">Safety recommendations <i class="fa-solid fa-arrow-right ml-1"></i></button>
+                                <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">View tailored tips <i class="fa-solid fa-arrow-right ml-1"></i></button>
                             </div>
                             <div id="awareness-trip-note" class="hidden mt-2 pt-2 border-t border-slate-100 text-[10px] text-emerald-800">
                                 <i class="fa-solid fa-floppy-disk mr-1"></i><span id="awareness-trip-copy">A saved journey is available on this device.</span>
@@ -1699,15 +1731,39 @@
             if (!title || !pill || !copy || !count) return;
 
             const totalSignals = hazards.length + crimeSignals.length;
+            const newsCategories = Array.from(new Set(webIntel
+                .map(article => classifySafetyText(String(article.title || '') + ' ' + String(article.snippet || '')))
+                .filter(category => category !== 'general')));
+            const topicLabels = {
+                sexual_violence: 'sexual violence',
+                gender_based_violence: 'gender-based violence',
+                explosion_or_blast: 'explosions',
+                theft: 'theft',
+                fraud: 'fraud',
+                unrest: 'unrest',
+                homicide: 'fatal violence',
+                violence: 'violence',
+                crime: 'crime',
+                accident: 'road accidents',
+                flood: 'flooding',
+                fire: 'fires',
+                earthquake: 'earthquakes',
+                volcano: 'volcanic hazards'
+            };
+            const topicSummary = newsCategories.slice(0, 2).map(category => topicLabels[category] || category.replace(/_/g, ' '));
             title.textContent = hazards.length
                 ? 'Nearby hazard signals detected'
                 : crimeSignals.length
                     ? 'Recorded crime data is available nearby'
-                    : 'No nearby hazard signals found';
-            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals ? ' attention' : '');
+                    : topicSummary.length
+                        ? 'News signals can inform prevention'
+                        : 'No nearby mapped hazard signals';
+            pill.className = 'awareness-risk-pill' + (hazards.length >= 3 ? ' alert' : totalSignals || newsCategories.length ? ' attention' : '');
             pill.innerHTML = totalSignals
-                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' signal' : ' signals')
-                : '<i class="fa-solid fa-eye"></i> Monitoring';
+                ? '<i class="fa-solid fa-triangle-exclamation"></i> ' + totalSignals + (totalSignals === 1 ? ' mapped signal' : ' mapped signals')
+                : webIntel.length
+                    ? '<i class="fa-solid fa-newspaper"></i> ' + webIntel.length + ' web signals'
+                    : '<i class="fa-solid fa-eye"></i> Monitoring';
             if (hazards.length) {
                 const nearest = hazards[0];
                 const nearestKm = calculateDistance(userLocation.lat, userLocation.lng, Number(nearest.lat), Number(nearest.lng));
@@ -1715,6 +1771,12 @@
                     (nearest.title || nearest.type) + ' (' + nearestKm.toFixed(1) + ' km). Check its timestamp and original source before acting.';
             } else if (crimeSignals.length) {
                 copy.textContent = crimeSignals.length + ' historical police-recorded crime item(s) were returned near this point. Locations are approximate and records are not live alerts; review the categories and reporting month below.';
+            } else if (newsCategories.length) {
+                copy.textContent = webIntel.length + ' web result(s) are available' +
+                    (topicSummary.length ? ', including ' + topicSummary.join(' and ') : '') +
+                    '. These can inform proportionate prevention, but do not confirm an active incident near you.';
+            } else if (webIntel.length) {
+                copy.textContent = webIntel.length + ' web result(s) are available for review. Search results may inform awareness, but are not verified incident records.';
             } else {
                 copy.textContent = 'No mapped hazard signals were found within 10 km in the currently available feeds. Coverage can be incomplete or delayed; this is not a safety guarantee.';
             }
