@@ -33,17 +33,17 @@ function extractResults(payload) {
 
 function getLocality(address, fallback) {
     address = address || {};
-    const primary = address.suburb || address.neighbourhood || address.city_district ||
-        address.town || address.city || address.village || address.municipality ||
-        address.county || '';
-    const city = address.city || address.town || address.municipality || address.county || '';
+    // Prefer municipality/city/regency fields. Do not search by village, suburb,
+    // neighbourhood, or district because that makes local awareness too narrow.
+    const municipality = address.city || address.town || address.municipality ||
+        address.county || address.city_municipality || address.state_district || '';
     const region = address.state || address.province || '';
-    const values = [primary, city, region, 'Indonesia'].filter(Boolean);
+    const values = [municipality, region, 'Indonesia'].filter(Boolean);
     const unique = [];
     values.forEach(function (value) {
         if (unique.indexOf(value) < 0) unique.push(value);
     });
-    return unique.length > 1 ? unique.join(', ') : fallback + ', Indonesia';
+    return unique.length > 1 ? unique.join(', ') : (municipality || region || fallback) + ', Indonesia';
 }
 
 export default {
@@ -116,50 +116,94 @@ export default {
             // Keep rounded coordinates as a broad-area fallback.
         }
 
-        const query = 'recent local news reports and official public-safety notices about pickpocketing, bag snatching, phone theft, robbery, assault, card skimming, payment-card fraud, scams, road traffic accidents, vehicle crashes, flooding, fires, or emergency incidents near ' +
-            locality + ' in the last 24 hours. Prefer police, fire and rescue services, local government, transport agencies, and established local newsrooms. Return relevant source links and preserve the original publication date and reported location when available. Do not invent events.';
+        const query = 'publicly reported crime, violence, murder, homicide, sexual assault, rape, sexual harassment, riots, mob violence, fatal clashes, deaths during unrest, pickpocketing, bag snatching, robbery, phone theft, scams, fraud, card skimming, road accidents, traffic crashes, flooding, fires and other public-safety incidents in ' +
+            locality + '. Cover incidents reported in the last 30 days and notable historical incidents up to 5 years ago. Include dates, approximate locality, incident type, source links, official statements where available, and whether people were reported injured or killed. Prefer police, courts, local government, emergency services, reputable local newsrooms and established national media. Distinguish alleged, reported, investigated, charged, and confirmed outcomes. Do not imply a historical incident is current, do not infer a specific person or address is involved, and do not invent events.';
+        const timeWindows = [
+            { label: 'recent-30-days', query: 'recent last 30 days' },
+            { label: 'history-1-to-5-years', query: 'historical past 5 years notable incidents' }
+        ];
 
         try {
-            const searchUrl = new URL('https://api.search.tinyfish.ai/');
-            searchUrl.searchParams.set('query', query);
-            const searchResponse = await fetch(searchUrl.toString(), {
-                headers: {
-                    'X-API-Key': env.TINYFISH_API_KEY,
-                    'Accept': 'application/json'
+            const gathered = [];
+            const seen = new Set();
+            for (const window of timeWindows) {
+                const scopedQuery = query + ' Search window: ' + window.query + '. Label this window as ' + window.label + '.';
+                const searchUrl = new URL('https://api.search.tinyfish.ai/');
+                searchUrl.searchParams.set('query', scopedQuery);
+                const searchResponse = await fetch(searchUrl.toString(), {
+                    headers: {
+                        'X-API-Key': env.TINYFISH_API_KEY,
+                        'Accept': 'application/json'
+                    }
+                });
+                if (!searchResponse.ok) {
+                    // A failed historic search should not discard current reports (or vice versa).
+                    continue;
                 }
-            });
-            if (!searchResponse.ok) {
-                return jsonResponse({
-                    error: 'TinyFish Search API returned HTTP ' + searchResponse.status,
-                    results: [],
-                    area: locality
-                }, 502, corsOrigin);
+
+                const payload = await searchResponse.json();
+                extractResults(payload).forEach(function (item) {
+                    const targetUrl = item.url || item.link || item.href || '';
+                    if (!/^https?:\/\//i.test(targetUrl)) return;
+                    const key = targetUrl.toLowerCase();
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    let source = '';
+                    try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
+                    const publishedAt = item.publishedAt || item.published_at || item.date || null;
+                    const snippet = String(item.snippet || item.description || item.content || '');
+                    const title = String(item.title || item.name || 'Local public-safety report');
+                    const combined = (title + ' ' + snippet).toLowerCase();
+                    let category = 'public_safety';
+                    if (/rape|sexual assault|sexual violence|molest|harass/.test(combined)) category = 'sexual_violence';
+                    else if (/murder|homicide|killed|fatal stabbing|fatal shooting|fatal clash/.test(combined)) category = 'homicide_or_fatality';
+                    else if (/riot|unrest|mob violence|clash|communal violence/.test(combined)) category = 'unrest';
+                    else if (/pickpocket|snatch|theft|robbery|burglary|stolen phone/.test(combined)) category = 'theft';
+                    else if (/scam|fraud|card skimming|carding|phishing/.test(combined)) category = 'scam_or_fraud';
+                    else if (/accident|crash|collision|hit-and-run/.test(combined)) category = 'road_accident';
+                    else if (/flood|inundation|landslide|earthquake|volcan/.test(combined)) category = 'disaster';
+                    let ageYears = null;
+                    if (publishedAt) {
+                        const parsed = Date.parse(String(publishedAt));
+                        if (Number.isFinite(parsed)) ageYears = Math.max(0, (Date.now() - parsed) / (365.2425 * 24 * 60 * 60 * 1000));
+                    }
+                    gathered.push({
+                        id: key,
+                        title: title,
+                        snippet: snippet,
+                        url: targetUrl,
+                        source: source || 'TinyFish Search',
+                        area: locality,
+                        publishedAt: publishedAt,
+                        ageYears: ageYears,
+                        searchWindow: window.label,
+                        category: category,
+                        verified: false,
+                        recencyLabel: ageYears === null ? 'Date not confirmed' :
+                            ageYears < (30 / 365.2425) ? 'Reported within ~30 days' :
+                            ageYears < 1 ? 'Historical · under 1 year' :
+                            ageYears < 2 ? 'Historical · 1–2 years' :
+                            ageYears < 5 ? 'Historical · 2–5 years' : 'Outside awareness window'
+                    });
+                });
             }
 
-            const payload = await searchResponse.json();
-            const seen = new Set();
-            const results = extractResults(payload).map(function (item) {
-                const targetUrl = item.url || item.link || item.href || '';
-                if (!/^https?:\/\//i.test(targetUrl) || seen.has(targetUrl)) return null;
-                seen.add(targetUrl);
-                let source = '';
-                try { source = new URL(targetUrl).hostname.replace(/^www\./, ''); } catch (_) {}
-                return {
-                    title: String(item.title || item.name || 'Local news signal'),
-                    snippet: String(item.snippet || item.description || item.content || ''),
-                    url: targetUrl,
-                    source: source || 'TinyFish Search',
-                    area: locality,
-                    publishedAt: item.publishedAt || item.published_at || item.date || null,
-                    verified: false
-                };
-            }).filter(Boolean).slice(0, 12);
-
+            const now = Date.now();
+            const recent = [];
+            const historic = [];
+            gathered.forEach(function (item) {
+                if (item.ageYears === null || item.ageYears <= (30 / 365.2425)) recent.push(item);
+                else if (item.ageYears <= 5) historic.push(item);
+            });
+            // Prioritize timely information, while preserving a separate historical-awareness section in the response.
             const responseBody = {
                 area: locality,
+                radiusType: 'municipality/city/regency',
                 generatedAt: new Date().toISOString(),
-                note: 'Search/media signals are not independently verified incidents and are not precisely geolocated.',
-                results: results
+                recentResults: recent.slice(0, 8),
+                historicalResults: historic.slice(0, 12),
+                results: recent.concat(historic).slice(0, 20),
+                note: 'TinyFish search/media leads are not independently verified incident records and are not precisely geolocated. Dates and outcomes must be checked at the original source. A historical report is not a claim of current danger.'
             };
 
             try {
