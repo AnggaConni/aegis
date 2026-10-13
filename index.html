@@ -1468,9 +1468,24 @@
                 const requestUrl = new URL(TINYFISH_PROXY_URL);
                 requestUrl.searchParams.set('lat', String(lat));
                 requestUrl.searchParams.set('lng', String(lng));
-                const response = await fetchWithTimeout(requestUrl.toString(), { headers: { 'Accept': 'application/json' } }, 30000);
-                if (!response.ok) throw new Error('TinyFish proxy HTTP ' + response.status);
-                const payload = await response.json();
+                // Three search windows can take longer than a single quick API request.
+                const response = await fetchWithTimeout(requestUrl.toString(), { headers: { 'Accept': 'application/json' } }, 60000);
+                let payload = null;
+                try {
+                    payload = await response.json();
+                } catch (_) {
+                    payload = null;
+                }
+                if (!response.ok) {
+                    const message = payload && payload.error ? String(payload.error) : ('TinyFish proxy HTTP ' + response.status);
+                    const error = new Error(message);
+                    error.status = response.status;
+                    error.payload = payload;
+                    throw error;
+                }
+                if (!payload || typeof payload !== 'object') {
+                    throw new Error('TinyFish proxy returned invalid JSON');
+                }
                 const bucketRows = (payload.recentResults || []).concat(
                     payload.mediumTermResults || [],
                     payload.longTermResults || [],
@@ -1544,8 +1559,39 @@
                 renderPersonalizedRecommendation();
                 renderFeed(activeFeedFilter);
             } catch (error) {
-                console.warn('TinyFish search failed:', error);
-                updateSourceStatus('tinyfish', 'Unavailable', 'error');
+                console.warn('TinyFish search failed:', error, error && error.payload ? error.payload : '');
+                const statusCode = Number(error && error.status) || 0;
+                const payload = error && error.payload && typeof error.payload === 'object' ? error.payload : null;
+                const failedWindows = payload && Array.isArray(payload.failedSearchWindows) ? payload.failedSearchWindows : [];
+                let statusLabel = 'Unavailable';
+                if (statusCode === 429 || failedWindows.some(item => item && item.reason === 'rate-limited')) {
+                    statusLabel = 'Rate limited';
+                } else if (statusCode === 503 || /TINYFISH_API_KEY.*not configured/i.test(String(error && error.message || ''))) {
+                    statusLabel = 'Worker secret missing';
+                } else if (statusCode === 401 || statusCode === 403 || failedWindows.some(item => item && item.reason === 'authentication-failed')) {
+                    statusLabel = 'API key rejected';
+                } else if (failedWindows.length) {
+                    const timeouts = failedWindows.filter(item => item && item.reason === 'timeout').length;
+                    statusLabel = timeouts
+                        ? ('Search timeout · ' + timeouts + '/' + failedWindows.length)
+                        : ('Search failed · ' + failedWindows.length + '/3');
+                } else if (statusCode) {
+                    statusLabel = 'Unavailable · HTTP ' + statusCode;
+                } else if (/timeout|timed out|abort/i.test(String(error && error.message || ''))) {
+                    statusLabel = 'Request timed out';
+                } else if (/failed to fetch|networkerror|network request failed/i.test(String(error && error.message || ''))) {
+                    statusLabel = 'Network/CORS error';
+                }
+                updateSourceStatus('tinyfish', statusLabel, 'error');
+                const statusNode = document.getElementById('status-tinyfish');
+                if (statusNode) {
+                    const reasons = failedWindows.map(item => {
+                        const label = String(item && item.window || 'window');
+                        const reason = String(item && (item.reason || item.status) || 'failed');
+                        return label + ': ' + reason;
+                    });
+                    statusNode.title = reasons.length ? reasons.join(' · ') : String(error && error.message || 'Request failed');
+                }
             }
         }
 
