@@ -439,6 +439,16 @@
             }
         }
 
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        }
+
         function addIncidentIfUnique(incident) {
             if (!Number.isFinite(Number(incident.lat)) || !Number.isFinite(Number(incident.lng))) return false;
             const duplicate = incident.type === 'earthquake' && incidents.some(existing => {
@@ -540,7 +550,7 @@
             const tasks = [
                 (async () => {
                     try {
-                        const response = await fetch('https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json');
+                        const response = await fetchWithTimeout('https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json');
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         const payload = await response.json();
                         const quake = payload && payload.Infogempa && payload.Infogempa.gempa;
@@ -571,7 +581,7 @@
                 })(),
                 (async () => {
                     try {
-                        const response = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson');
+                        const response = await fetchWithTimeout('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson');
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         const payload = await response.json();
                         let nearbyCount = 0;
@@ -612,7 +622,7 @@
                         endpoint.searchParams.set('fromdate', dateString(startDate));
                         endpoint.searchParams.set('todate', dateString(endDate));
                         endpoint.searchParams.set('alertlevel', 'red;orange');
-                        const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                        const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         const payload = await response.json();
                         const features = Array.isArray(payload.features) ? payload.features :
@@ -657,7 +667,7 @@
                 (async () => {
                     try {
                         const endpoint = 'https://api.petabencana.id/reports?geoformat=geojson&timeperiod=21600';
-                        const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
+                        const response = await fetchWithTimeout(endpoint, { headers: { 'Accept': 'application/json' } });
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         const payload = await response.json();
                         let features = [];
@@ -744,7 +754,7 @@
                             'nwr["amenity"="fire_station"](around:10000,' + lat + ',' + lng + ');' +
                             ');out center;';
                         const endpoint = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
-                        const response = await fetch(endpoint);
+                        const response = await fetchWithTimeout(endpoint);
                         if (!response.ok) throw new Error('HTTP ' + response.status);
                         const payload = await response.json();
                         let nearbyCount = 0;
@@ -791,7 +801,7 @@
                 const requestUrl = new URL(TINYFISH_PROXY_URL);
                 requestUrl.searchParams.set('lat', String(lat));
                 requestUrl.searchParams.set('lng', String(lng));
-                const response = await fetch(requestUrl.toString(), { headers: { 'Accept': 'application/json' } });
+                const response = await fetchWithTimeout(requestUrl.toString(), { headers: { 'Accept': 'application/json' } });
                 if (!response.ok) throw new Error('TinyFish proxy HTTP ' + response.status);
                 const payload = await response.json();
                 const rows = Array.isArray(payload.results) ? payload.results : [];
@@ -1121,7 +1131,7 @@
                 endpoint.searchParams.set('format', 'jsonv2');
                 endpoint.searchParams.set('limit', '1');
                 endpoint.searchParams.set('q', query);
-                const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
                 if (!response.ok) throw new Error('Destination search HTTP ' + response.status);
                 const results = await response.json();
                 if (!results.length) throw new Error('Destination not found. Try a more specific place name.');
@@ -1161,7 +1171,7 @@
                 const endpoint = 'https://router.project-osrm.org/route/v1/driving/' +
                     userLocation.lng + ',' + userLocation.lat + ';' + routeDestination.lng + ',' + routeDestination.lat +
                     '?overview=full&geometries=geojson&steps=true&alternatives=true';
-                const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
+                const response = await fetchWithTimeout(endpoint, { headers: { 'Accept': 'application/json' } });
                 if (!response.ok) throw new Error('Routing service HTTP ' + response.status);
                 const payload = await response.json();
                 if (payload.code !== 'Ok' || !Array.isArray(payload.routes) || !payload.routes.length) throw new Error('No driving route found. Try a different destination.');
@@ -1412,7 +1422,7 @@
                 endpoint.searchParams.set('forecast_days', '2');
                 endpoint.searchParams.set('timeformat', 'unixtime');
                 endpoint.searchParams.set('timezone', 'GMT');
-                const response = await fetch(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
+                const response = await fetchWithTimeout(endpoint.toString(), { headers: { 'Accept': 'application/json' } });
                 if (!response.ok) throw new Error('Open-Meteo HTTP ' + response.status);
                 const payload = await response.json();
                 const hourly = payload.hourly || {};
