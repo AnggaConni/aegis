@@ -1206,7 +1206,10 @@
                 webIntel = append
                     ? Array.from(new Map(webIntel.concat(fetched).map(row => [row.url, row])).values()).slice(-30)
                     : fetched;
-                updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' results', 'ok');
+                const rejectedCount = payload.diagnostics && Number.isFinite(Number(payload.diagnostics.rejectedNonLocalCount))
+                    ? Number(payload.diagnostics.rejectedNonLocalCount) : null;
+                updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' items' +
+                    (rejectedCount === null ? '' : ' · filtered ' + rejectedCount + ' non-local'), 'ok');
                 renderRadarSidebar(activeRadarFilter);
                 renderAwarenessOverview();
                 renderSafetyRecommendations();
@@ -2042,6 +2045,7 @@
                 String(article.category || 'public safety').replace(/_/g, ' ').toUpperCase() + ' · UNVERIFIED';
             setDetailSource(article.source || 'TinyFish Search result', article.url);
             document.getElementById('detail-distance').textContent = 'Search area: ' + (article.searchArea || article.area || 'approximate') +
+                (article.eventLocation ? ' · Reported event location: ' + article.eventLocation : '') +
                 ' · ' + getWebIntelScopeLabel(article) + '.';
             document.getElementById('detail-time').textContent = (article.publicationDateLabel || 'Publication date unconfirmed') +
                 ' · ' + (article.eventDateLabel || 'Event date unconfirmed') +
