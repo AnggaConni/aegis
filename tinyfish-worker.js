@@ -638,11 +638,13 @@ function knownHistoricalIncidentDate(title, snippet, url, nowMs) {
 async function enrichOriginalSourceDates(item, title, snippet, nowMs, budget, diagnostics) {
     const publicationRaw = item.publishedAt || item.published_at || item.date || item.pubDate || item.published || null;
     let publicationParsed = parseDateValue(publicationRaw, nowMs);
-    let eventParsed = extractEventDate(item, title, snippet, nowMs, publicationParsed);
+    const knownHistorical = knownHistoricalIncidentDate(title, snippet, item.url || item.link || item.href || '', nowMs);
+    let eventParsed = knownHistorical || extractEventDate(item, title, snippet, nowMs, publicationParsed);
     let enriched = false;
     let checked = false;
-    const knownHistorical = knownHistoricalIncidentDate(title, snippet, item.url || item.link || item.href || '', nowMs);
-    if (!eventParsed && knownHistorical) {
+    // Curated known-history dates must take precedence over relative phrases such as
+    // "yesterday" that otherwise resolve against the current date.
+    if (knownHistorical) {
         diagnostics.knownHistoricalDateMatchCount += 1;
         return {
             publicationRaw: publicationRaw,
