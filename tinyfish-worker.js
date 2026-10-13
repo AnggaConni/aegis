@@ -479,7 +479,7 @@ function extractCandidateOriginalUrls(text, sourceUrl) {
     return candidates.slice(0, 2);
 }
 
-function extractContextualEventDateFromSource(title, snippet, bodyText, nowMs) {
+function extractEventDateFromSourceText(title, snippet, bodyText, nowMs) {
     const focus = normalize(String(title || '') + ' ' + String(snippet || ''));
     const fatalFocus = /\b(deaths?|fatalities|killed|dead|died|fatal|homicide|murder|menewaskan|korban tewas|meninggal|tewas)\b/.test(focus);
     const explosionFocus = /\b(explosion|blast|bombing|bomb|ledakan|pengeboman)\b/.test(focus);
