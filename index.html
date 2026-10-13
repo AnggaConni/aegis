@@ -263,7 +263,7 @@
                                 </div>
                                 <span id="awareness-risk-pill" class="awareness-risk-pill"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
                             </div>
-                            <p id="awareness-risk-copy" class="text-[10px] text-slate-600 leading-relaxed mt-2">Monitor nearby incident reports and local safety information without creating a route.</p>
+                            <p id="awareness-risk-copy" class="text-[10px] text-slate-600 leading-relaxed mt-2">Monitor nearby incident reports and local safety information without creating a route. This is an information overview, not a certified area risk assessment.</p>
                             <div class="flex items-center justify-between gap-2 mt-2">
                                 <span id="awareness-signal-count" class="text-[9px] font-semibold text-slate-500">Checking available feeds</span>
                                 <button class="awareness-action primary" type="button" onclick="switchTab('feed'); filterFeed('guide', document.getElementById('feed-filter-guide'))">Safety recommendations <i class="fa-solid fa-arrow-right ml-1"></i></button>
@@ -559,6 +559,7 @@
             const saved = writeStoredJson(JOURNEY_PLAN_KEY, journeyPlan);
             journeyPlanPersisted = saved;
             updateOfflinePlanNote();
+            renderAwarenessOverview();
             return saved;
         }
 
@@ -1272,7 +1273,11 @@
                 displaySavedRouteWeather();
             }
             if (safetyMode === 'awareness') {
-                setRouteStatus('Awareness mode: browse nearby reports and safety guidance without planning a route.', 'neutral');
+                if (routeLayer && map) map.removeLayer(routeLayer);
+                if (routeStartMarker && map) map.removeLayer(routeStartMarker);
+                if (routeEndMarker && map) map.removeLayer(routeEndMarker);
+                routeLayer = routeStartMarker = routeEndMarker = null;
+                setRouteStatus('Awareness mode: browse nearby reports and safety guidance without displaying a planned route.', 'neutral');
             } else if (!routeOptions.length) {
                 setRouteStatus('Choose a destination to plan a route. Awareness and safety recommendations remain available without a route.', 'neutral');
             }
