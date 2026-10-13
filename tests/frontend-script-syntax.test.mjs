@@ -54,3 +54,24 @@ test('mobile bottom navigation is compact and radar content scrolls naturally', 
   assert.match(html, /#radar-sidebar\s*\{\s*max-height:\s*none;\s*overflow:\s*visible;/);
   assert.match(html, /#view-radar\s*\{[\s\S]*?100dvh[\s\S]*?54px/);
 });
+
+
+test('mobile alert detail panel is hosted below the header, not over the intel feed', () => {
+  const headerEnd = html.indexOf('</header>');
+  const mobileHostStart = html.indexOf('<div id="mobile-detail-host"');
+  const mainStart = html.indexOf('<main class="flex-1 relative bg-slate-50">');
+  assert.ok(headerEnd >= 0 && mobileHostStart > headerEnd && mainStart > mobileHostStart);
+  assert.match(html, /function syncIncidentDetailPlacement\(\)/);
+  assert.match(html, /if \(isMobile && panel\.parentElement !== mobileHost\)\s*\{\s*mobileHost\.appendChild\(panel\)/);
+  assert.match(html, /else if \(!isMobile && panel\.parentElement !== workspace\)\s*\{\s*workspace\.insertBefore\(panel, topLayout\.nextSibling\)/);
+  assert.match(html, /document\.getElementById\('incident-detail-panel'\)\.setAttribute\('data-selection-state', 'selected'\)/);
+  assert.match(html, /setAttribute\('data-selection-state', 'empty'\)/);
+});
+
+test('mobile detail panel is compact and reserves layout space rather than floating over content', () => {
+  assert.match(html, /#mobile-detail-host\s*\{\s*display:\s*none;\s*\}/);
+  assert.match(html, /@media\s*\(max-width:\s*800px\)[\s\S]*?#mobile-detail-host\s*\{\s*display:\s*block/);
+  assert.match(html, /#incident-detail-panel\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*7px 8px;/);
+  assert.match(html, /#incident-detail-panel\[data-selection-state="empty"\] #detail-desc/);
+  assert.match(html, /#view-radar\s*\{\s*height:\s*100%;\s*min-height:\s*0;/);
+});
