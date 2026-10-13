@@ -575,9 +575,8 @@
                             const coords = feature.geometry.coordinates;
                             const eqLat = Number(coords[1]), eqLng = Number(coords[0]);
                             const dist = calculateDistance(lat, lng, eqLat, eqLng);
-                            if (dist > 2000) return;
                             const stamp = new Date(feature.properties.time).toISOString();
-                            const added = addIncidentIfUnique({
+                            const quakeReport = {
                                 id: 'usgs_' + feature.id, type: 'earthquake',
                                 title: 'USGS earthquake · M ' + String(feature.properties.mag),
                                 desc: feature.properties.place || 'Earthquake reported by USGS',
@@ -586,7 +585,10 @@
                                 sourceName: 'USGS Earthquake Catalog',
                                 sourceUrl: feature.properties.url || 'https://earthquake.usgs.gov/earthquakes/',
                                 confidenceLabel: 'Official seismic catalog'
-                            });
+                            };
+                            routeHazardCandidates.push(quakeReport);
+                            if (dist > 2000) return;
+                            const added = addIncidentIfUnique(quakeReport);
                             if (added) nearbyCount++;
                         });
                         updateSourceStatus('usgs', 'Online · ' + nearbyCount + ' nearby', 'ok');
@@ -722,7 +724,7 @@
             incidents.sort((a, b) => a.dist - b.dist);
         }
 
-        async function fetchTinyFishIntel(lat, lng) {
+        async function fetchTinyFishIntel(lat, lng, localityLabel, append = false) {
             if (!TINYFISH_PROXY_URL) {
                 updateSourceStatus('tinyfish', 'Worker not configured', 'neutral');
                 return;
@@ -736,16 +738,19 @@
                 if (!response.ok) throw new Error('TinyFish proxy HTTP ' + response.status);
                 const payload = await response.json();
                 const rows = Array.isArray(payload.results) ? payload.results : [];
-                webIntel = rows.map((row, index) => ({
+                const fetched = rows.map((row, index) => ({
                     id: String(row.id || 'tinyfish_' + index),
                     title: String(row.title || 'Local news signal'),
                     snippet: String(row.snippet || row.description || 'No summary supplied by the search result.'),
                     url: safeHttpUrl(row.url),
                     source: String(row.source || 'TinyFish Search'),
-                    area: String(row.area || 'Approximate search area'),
+                    area: String(row.area || localityLabel || 'Approximate search area'),
                     publishedAt: row.publishedAt || row.published_at || null,
                     verified: false
                 })).filter(row => row.url);
+                webIntel = append
+                    ? Array.from(new Map(webIntel.concat(fetched).map(row => [row.url, row])).values()).slice(-30)
+                    : fetched;
                 updateSourceStatus('tinyfish', 'Loaded · ' + webIntel.length + ' results', 'ok');
                 renderRadarSidebar(activeRadarFilter);
                 renderFeed(activeFeedFilter);
@@ -999,7 +1004,7 @@
                     title.textContent = article.title;
                     const meta = document.createElement('span');
                     meta.className = 'radar-intel-meta block';
-                    meta.textContent = (article.source || 'TinyFish Search') + ' · not independently verified';
+                    meta.textContent = (article.source || 'TinyFish Search') + ' · ' + (article.area || 'local area') + ' · not independently verified';
                     textWrap.appendChild(title);
                     textWrap.appendChild(meta);
                     item.appendChild(icon);
@@ -1110,6 +1115,7 @@
                 }));
                 selectedRouteIndex = 0;
                 applyRouteOption(0, true);
+                fetchTinyFishIntel(routeDestination.lat, routeDestination.lng, routeDestinationLabel, true);
             } catch (error) {
                 console.warn('Route calculation failed:', error);
                 setRouteStatus((error.message || 'Route calculation failed.') + ' The free OSRM demo can be rate-limited or unavailable.', 'error');
@@ -1157,20 +1163,36 @@
                 maxLat = Math.max(maxLat, Number(point[1]));
             });
             const midLat = (minLat + maxLat) / 2;
-            const paddingLat = radius / 110540;
-            const paddingLng = radius / (111320 * Math.max(0.05, Math.cos(midLat * Math.PI / 180)));
-
+            const padLat = radius / 110540;
+            const padLng = radius / (111320 * Math.max(0.05, Math.cos(midLat * Math.PI / 180)));
             const candidates = new Map();
             routeHazardCandidates.concat(incidents.filter(isHazardForRouting)).forEach(inc => {
                 if (inc && isHazardForRouting(inc) && inc.id) candidates.set(String(inc.id), inc);
             });
 
-            return Array.from(candidates.values())
-                .filter(inc => Number(inc.lat) >= minLat - paddingLat && Number(inc.lat) <= maxLat + paddingLat &&
-                    Number(inc.lng) >= minLng - paddingLng && Number(inc.lng) <= maxLng + paddingLng)
+            const rows = Array.from(candidates.values())
+                .filter(inc => Number(inc.lat) >= minLat - padLat && Number(inc.lat) <= maxLat + padLat &&
+                    Number(inc.lng) >= minLng - padLng && Number(inc.lng) <= maxLng + padLng)
                 .map(inc => ({ incident: inc, distance: distanceFromPointToRouteMeters(inc.lat, inc.lng, coordinates) }))
                 .filter(row => row.distance <= radius)
                 .sort((a, b) => a.distance - b.distance);
+
+            const deduplicated = [];
+            rows.forEach(row => {
+                const inc = row.incident;
+                if (inc.type === 'earthquake') {
+                    const stamp = new Date(inc.timestamp || 0).getTime();
+                    const duplicate = deduplicated.some(existing => {
+                        if (existing.incident.type !== 'earthquake') return false;
+                        const otherStamp = new Date(existing.incident.timestamp || 0).getTime();
+                        return calculateDistance(existing.incident.lat, existing.incident.lng, inc.lat, inc.lng) < 35 &&
+                            Math.abs(stamp - otherStamp) < 90 * 60 * 1000;
+                    });
+                    if (duplicate) return;
+                }
+                deduplicated.push(row);
+            });
+            return deduplicated;
         }
 
         function formatRouteDistance(meters) {
