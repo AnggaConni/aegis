@@ -773,6 +773,7 @@ function classifyIncident(title, snippet) {
     const text = normalize(String(title || '') + ' ' + String(snippet || ''));
     const hasExplosion = /\b(explosion|explosions|blast|blasts|bombing|bombings|explosive device|ledakan|peledakan|pengeboman|bom meledak)\b/.test(text);
     const hasSexualViolence = /\b(rape|sexual assault|sexual violence|molest|sexual harassment|pemerkosaan|perkosaan|kekerasan seksual|pelecehan seksual|pencabulan)\b/.test(text);
+    const hasGenderBasedViolence = /\b(gender based violence|violence against women|violence against girls|intimate partner violence|domestic violence|gender based abuse|kekerasan berbasis gender|kekerasan terhadap perempuan|kekerasan dalam rumah tangga)\b/.test(text);
     const hasUnrest = /\b(riot|unrest|mob violence|clash|clashes|communal violence|protest|protests|demonstration|demonstrations|tawuran|bentrokan|bentrok|ricuh|kerusuhan|unjuk rasa|demonstrasi)\b/.test(text);
     const hasFatality = /\b(murder|homicide|deaths?|fatalities|killed|was killed|were killed|people dead|fatal|deadly|died|died after|victim died|death toll|people were killed|run over|struck and killed|eight deaths|korban tewas|meninggal dunia|tewas dalam|serangan fatal|serangan maut|penyerangan fatal|menewaskan|korban meninggal|kematian|korban meninggal dunia)\b/.test(text);
     const hasFatalAssault = /\b(fatal assault|fatal attack|fatal stabbing|fatal shooting|deadly assault|died after (?:an? )?assault|assault incident.*(?:died|fatal|death)|serangan fatal|meninggal setelah dianiaya)\b/.test(text);
@@ -784,6 +785,7 @@ function classifyIncident(title, snippet) {
     let category = 'public_safety';
     if (hasExplosion) category = 'explosion_or_blast';
     else if (hasSexualViolence) category = 'sexual_violence';
+    else if (hasGenderBasedViolence) category = 'gender_based_violence';
     else if (hasUnrest) category = 'unrest';
     else if (hasFatalAssault || hasFatality) category = 'homicide_or_fatality';
     else if (hasTheft) category = 'theft';
@@ -794,6 +796,7 @@ function classifyIncident(title, snippet) {
     const tags = [];
     if (hasExplosion) tags.push('explosion_or_blast');
     if (hasSexualViolence) tags.push('sexual_violence');
+    if (hasGenderBasedViolence) tags.push('gender_based_violence');
     if (hasUnrest) tags.push('unrest');
     if (hasFatality || hasFatalAssault) tags.push('fatality');
     if (hasTheft) tags.push('theft');
