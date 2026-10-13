@@ -6,6 +6,7 @@
 const DEFAULT_ALLOWED_ORIGINS = 'https://anggaconni.github.io';
 const DAY_MS = 86400000;
 const FIVE_YEARS_DAYS = 1826.25;
+const TINYFISH_SEARCH_TIMEOUT_MS = 12000;
 
 // Best-effort per-isolate guard. Cloudflare may run several isolates/regions, so this
 // is defence-in-depth, not a globally atomic quota. The Worker cache reduces repeat
@@ -907,7 +908,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v11?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v12?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -975,16 +976,42 @@ export default {
                     '. This label records the search pass only; do not assume the search window equals the incident date. Return publication and event dates separately if available.';
                 const searchUrl = new URL('https://api.search.tinyfish.ai/');
                 searchUrl.searchParams.set('query', scopedQuery);
-                const searchResponse = await fetch(searchUrl.toString(), {
-                    headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(5000)
-                });
+                let searchResponse;
+                try {
+                    searchResponse = await fetch(searchUrl.toString(), {
+                        headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' },
+                        signal: AbortSignal.timeout(TINYFISH_SEARCH_TIMEOUT_MS)
+                    });
+                } catch (searchError) {
+                    const isTimeout = !!searchError && (
+                        searchError.name === 'TimeoutError' ||
+                        searchError.name === 'AbortError' ||
+                        /timed? ?out|timeout|aborted/i.test(String(searchError.message || ''))
+                    );
+                    failedSearchWindows.push({
+                        window: window.label,
+                        reason: isTimeout ? 'timeout' : 'network-error'
+                    });
+                    continue;
+                }
                 if (!searchResponse.ok) {
-                    failedSearchWindows.push({ window: window.label, status: searchResponse.status });
+                    failedSearchWindows.push({
+                        window: window.label,
+                        status: searchResponse.status,
+                        reason: searchResponse.status === 429 ? 'rate-limited'
+                            : (searchResponse.status === 401 || searchResponse.status === 403) ? 'authentication-failed'
+                            : 'upstream-http-error'
+                    });
+                    continue;
+                }
+                let payload;
+                try {
+                    payload = await searchResponse.json();
+                } catch (_) {
+                    failedSearchWindows.push({ window: window.label, status: searchResponse.status, reason: 'invalid-json' });
                     continue;
                 }
                 successfulSearches += 1;
-                const payload = await searchResponse.json();
                 const rows = extractResults(payload);
                 rawResultCount += rows.length;
 
@@ -1183,8 +1210,8 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 10,
-                buildVersion: 'global-drr-v1',
+                filterVersion: 11,
+                buildVersion: 'global-drr-v1.1-search-reliability',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults,
@@ -1196,7 +1223,16 @@ export default {
                 note: 'Search scope is derived from reverse-geocoded municipality, region, and country; it is not hardcoded to Indonesia. Incident reports and structural-risk context (such as prevalence studies or national surveys) use different labels. Structural-risk context is retained separately from live-incident timelines and may be up to ten years old. Publication dates and event dates are kept separate; search-pass labels are not event dates. Unverified reports are awareness leads, not confirmed incidents or precise map points. Missing results are not evidence that an area is safe.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 10, buildVersion: 'global-drr-v1', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({
+                    error: 'TinyFish Search did not return successful time-window searches',
+                    area: locality,
+                    results: [],
+                    successfulSearches: successfulSearches,
+                    failedSearchWindows: failedSearchWindows,
+                    filterVersion: 11,
+                    buildVersion: 'global-drr-v1.1-search-reliability',
+                    diagnostics: diagnostics
+                }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
