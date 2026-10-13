@@ -102,15 +102,15 @@ test('a known out-of-window date removes an earlier undated duplicate', async ()
 
 test('original article metadata filters the January 2016 Jakarta blast lead', async () => {
   const cnnLink = 'http://cnn.it/1UQuTRZ';
-  const facebookUrl = 'https://www.facebook.com/cnn/videos/jakarta-at-least-4-people-dead-after-blasts/10154379872021509/';
+  const facebookUrl = 'https://www.facebook.com/archive/jakarta-blasts-post';
   const html = '<!doctype html><html><head>' +
     '<meta content="2016-01-14T03:30:00Z" property="article:published_time">' +
     '<meta name="description" content="Deadly explosions in Jakarta on January 14, 2016.">' +
     '</head><body><article>Deadly explosions in Jakarta on January 14, 2016 killed several people.</article></body></html>';
   const body = await runWorker([
     [{
-      title: 'Jakarta: At least 4 people dead after blasts',
-      snippet: 'BREAKING: Police confirm explosions in #Jakarta, Indonesia. Developing story: ' + cnnLink + '.',
+      title: 'Jakarta explosions: at least four people dead',
+      snippet: 'An archived report describes explosions in Jakarta, Indonesia. Original report: ' + cnnLink + '.',
       url: facebookUrl
     }],
     [],
