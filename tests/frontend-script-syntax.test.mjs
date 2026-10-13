@@ -149,3 +149,10 @@ test('mobile safety overview is compact while preserving signal context and reco
   assert.match(html, /These can inform proportionate prevention, but do not confirm an active incident near you/);
   assert.match(html, /View tailored tips/);
 });
+
+
+test('mobile overview actions row and refreshed GPS status remain compact', () => {
+  assert.match(html, /#awareness-actions-row \{ align-items:center; gap:8px; margin-top:7px !important; \}/);
+  assert.match(html, /#gps-status span:last-child \{ font-size:9px !important; \}/);
+  assert.match(html, /id="awareness-actions-row"/);
+});
