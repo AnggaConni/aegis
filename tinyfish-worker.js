@@ -838,7 +838,7 @@ export default {
         const lat = Math.round(rawLat * 100) / 100;
         const lng = Math.round(rawLng * 100) / 100;
         const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
-        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v9?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
+        const cacheKey = new Request(url.origin + '/_cache/nearby-intel-v10?lat=' + lat + '&lng=' + lng + '&slot=' + timeBucket);
         const cache = caches.default;
         try {
             const cached = await cache.match(cacheKey);
@@ -1093,8 +1093,8 @@ export default {
                 generatedAt: new Date().toISOString(),
                 successfulSearches: successfulSearches,
                 failedSearchWindows: failedSearchWindows,
-                filterVersion: 8,
-                buildVersion: 'timeline-v5.2.1-context-dates',
+                filterVersion: 9,
+                buildVersion: 'timeline-v5.2.2-history-precedence',
                 rawResultCount: rawResultCount,
                 diagnostics: diagnostics,
                 recentResults: recentResults,
@@ -1105,7 +1105,7 @@ export default {
                 note: 'Event and publication dates are kept separate. Dates extracted from article text must match the incident context described by the search result; dates that only mark the start of a wider protest series are not treated as individual incident dates. Relative event dates such as yesterday or a number of days ago are approximate; weekday-only dates are inferred only when an absolute publication date provides a clear preceding weekday anchor, and same-weekday ambiguity remains unconfirmed. A small set of known historical references is date-matched explicitly. Source-page enrichment is best-effort and source text is not independently verified. eventDateUnconfirmedCount tracks results without an event date separately from timeline bucket assignment. searchPass/searchWindow identify the query pass only, not the incident or publication date. Statistical/reference pages and general crime roundups are filtered separately from specific incident reports. Approximate year/month dates are retained when any part of that period may fall within five years; periods wholly outside five years are excluded. Undated leads are manual-review-only and are not current alerts. The timeframe arrays are disjoint; use results for one combined feed. City mention is not precise geolocation. TinyFish results are unverified search leads; check original sources before making safety decisions.'
             };
             if (!successfulSearches) {
-                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 8, buildVersion: 'timeline-v5.2.1-context-dates', diagnostics: diagnostics }, 502, corsOrigin);
+                return jsonResponse({ error: 'TinyFish Search did not return successful time-window searches', area: locality, results: [], successfulSearches: 0, filterVersion: 9, buildVersion: 'timeline-v5.2.2-history-precedence', diagnostics: diagnostics }, 502, corsOrigin);
             }
             try {
                 const cacheResponse = new Response(JSON.stringify(responseBody), {
