@@ -198,3 +198,19 @@ test('TinyFish frontend allows long-running searches and surfaces provider failu
   assert.match(html, /statusLabel = 'Network\/CORS error'/);
   assert.match(html, /statusNode\.title = reasons\.length/);
 });
+
+
+test('feed filter pills keep high contrast in active and inactive states', () => {
+  assert.match(html, /#feed-filter-tabs \.filter-btn\s*\{[\s\S]*?background: #fff !important; color: #334155 !important;/);
+  assert.match(html, /#feed-filter-tabs \.filter-btn\.active[\s\S]*?background: #1d4ed8 !important; border-color: #1d4ed8 !important; color: #fff !important;/);
+  assert.match(html, /#feed-filter-tabs \.filter-btn:focus-visible/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /aria-pressed="false"/);
+});
+
+test('feed filter strip keeps the selected item visible on mobile', () => {
+  assert.match(html, /id="feed-filter-tabs"/);
+  assert.match(html, /Keep the selected filter fully visible/);
+  assert.match(html, /strip\.scrollTo\(\{ left: itemRight - strip\.clientWidth \+ 8, behavior: 'smooth' \}\)/);
+  assert.match(html, /flex: 0 0 auto/);
+});
