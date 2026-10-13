@@ -168,8 +168,8 @@ test('deduplication keeps the best dated copy and result buckets remain disjoint
 
 test('source page metadata separates publication date from incident date and classifies unrest', async () => {
   const url = 'https://localnews.example/jakarta-protests';
-  const publicationDate = '2025-08-29T00:00:00Z';
-  const eventDate = '2025-08-28T00:00:00Z';
+  const publicationDate = '2025-08-29T00:00:00.000Z';
+  const eventDate = '2025-08-28T00:00:00.000Z';
   const html = '<!doctype html><html><head>' +
     '<meta property="article:published_time" content="' + publicationDate + '">' +
     '</head><body><article>The fatal road incident occurred on August 28, 2025. Demonstrations continued in Jakarta.</article></body></html>';
