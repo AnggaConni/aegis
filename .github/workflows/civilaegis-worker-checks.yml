@@ -7,6 +7,8 @@ on:
       - "tinyfish-worker.js"
       - "index.html"
       - "sw.js"
+      - "manifest.json"
+      - "icon/**"
       - "tests/**"
       - ".github/workflows/civilaegis-worker-checks.yml"
   pull_request:
@@ -14,6 +16,8 @@ on:
       - "tinyfish-worker.js"
       - "index.html"
       - "sw.js"
+      - "manifest.json"
+      - "icon/**"
       - "tests/**"
       - ".github/workflows/civilaegis-worker-checks.yml"
 
@@ -27,6 +31,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Validate PWA icon and screenshot dimensions
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const files = [
+            'icon/launchericon-512x512.png',
+            'icon/screenshot-laptop.png',
+            'icon/Mobile screenshot 375x830.png'
+          ];
+          function inspectPng(path) {
+            const data = fs.readFileSync(path);
+            const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+            if (data.length < 24 || !data.subarray(0, 8).equals(signature)) {
+              throw new Error(path + ' is not a valid PNG');
+            }
+            return { path, width: data.readUInt32BE(16), height: data.readUInt32BE(20), bytes: data.length };
+          }
+          const results = files.map(inspectPng);
+          for (const item of results) console.log(JSON.stringify(item));
+          const icon = results[0];
+          if (icon.width !== 512 || icon.height !== 512) {
+            throw new Error('Launcher icon must really be 512x512 pixels; actual size is ' + icon.width + 'x' + icon.height);
+          }
+          NODE
       - name: Check TinyFish Worker syntax
         run: node --check --input-type=module < tinyfish-worker.js
       - name: Check service worker syntax
