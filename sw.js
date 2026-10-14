@@ -81,7 +81,7 @@ self.addEventListener('fetch', event => {
             return;
         }
 
-        // Only cache same-origin app assets. API responses are deliberately not intercepted or cached here.
+        // Cache same-origin app assets, icons, and screenshots. Live API responses are not intercepted here.
         if (/\.(?:html|json|svg|css|js|png|jpe?g|webp|ico)$/.test(url.pathname) || url.pathname.endsWith('/')) {
             event.respondWith((async () => {
                 const cached = await caches.match(request);
