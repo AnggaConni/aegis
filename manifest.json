@@ -1,8 +1,10 @@
 {
-  "id": "/aegis/",
+  "id": "./",
   "name": "CivilAegis Personal Safety Radar",
   "short_name": "CivilAegis",
   "description": "A civilian safety radar combining location-aware public data, hazard context, news signals, and practical prevention guidance.",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -10,11 +12,8 @@
   "orientation": "any",
   "background_color": "#f8fafc",
   "theme_color": "#0f172a",
-  "categories": [
-    "travel",
-    "navigation",
-    "safety"
-  ],
+  "categories": ["travel", "navigation", "safety"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "./icon/launchericon-48x48.png",
@@ -53,6 +52,12 @@
       "purpose": "any"
     },
     {
+      "src": "./icon/launchericon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
@@ -62,14 +67,12 @@
   "screenshots": [
     {
       "src": "./icon/screenshot-laptop.png",
-      "sizes": "1917x916",
       "type": "image/png",
       "form_factor": "wide",
       "label": "CivilAegis desktop safety radar showing map, nearby facilities, and safety overview"
     },
     {
       "src": "./icon/Mobile%20screenshot%20375x830.png",
-      "sizes": "375x830",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "CivilAegis mobile safety radar showing location signals and recommendations"
