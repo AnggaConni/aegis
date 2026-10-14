@@ -67,12 +67,14 @@
   "screenshots": [
     {
       "src": "./icon/screenshot-laptop.png",
+      "sizes": "1917x916",
       "type": "image/png",
       "form_factor": "wide",
       "label": "CivilAegis desktop safety radar showing map, nearby facilities, and safety overview"
     },
     {
       "src": "./icon/Mobile%20screenshot%20375x830.png",
+      "sizes": "750x1660",
       "type": "image/png",
       "form_factor": "narrow",
       "label": "CivilAegis mobile safety radar showing location signals and recommendations"
