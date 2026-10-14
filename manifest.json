@@ -1,11 +1,12 @@
 {
-  "id": "./",
+  "id": "/aegis/",
   "name": "CivilAegis Personal Safety Radar",
   "short_name": "CivilAegis",
   "description": "A civilian safety radar combining location-aware public data, hazard context, news signals, and practical prevention guidance.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "any",
   "background_color": "#f8fafc",
   "theme_color": "#0f172a",

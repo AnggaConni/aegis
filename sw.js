@@ -15,59 +15,121 @@ const APP_SHELL = [
     './icon/Mobile%20screenshot%20375x830.png'
 ];
 const VENDOR_HOSTS = new Set([
-    'cdn.tailwindcss.com',
-    'unpkg.com',
-    'cdnjs.cloudflare.com',
-    'fonts.googleapis.com',
-    'fonts.gstatic.com'
+  'cdn.tailwindcss.com',
+  'unpkg.com',
+  'cdnjs.cloudflare.com',
+  'fonts.googleapis.com',
+  'fonts.gstatic.com'
+]);
+const TILE_HOSTS = new Set(['tile.openstreetmap.org']);
+const DATA_HOSTS = new Set([
+  'data.bmkg.go.id',
+  'earthquake.usgs.gov',
+  'www.gdacs.org',
+  'gdacs.org',
+  'eonet.gsfc.nasa.gov',
+  'api.petabencana.id',
+  'overpass-api.de',
+  'nominatim.openstreetmap.org',
+  'api.open-meteo.com',
+  'router.project-osrm.org',
+  'police.uk',
+  'data.police.uk',
+  'civilaegis-tinyfish-proxy.conniezz-cool.workers.dev'
 ]);
 
+const MAX_TILE_ENTRIES = 350;
+const MAX_DATA_ENTRIES = 100;
+const MAX_RUNTIME_ENTRIES = 80;
+
 self.addEventListener('install', event => {
-    event.waitUntil((async () => {
-        const cache = await caches.open(SHELL_CACHE);
-        await Promise.allSettled(APP_SHELL.map(path => cache.add(path)));
-        self.skipWaiting();
-    })());
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL_CACHE);
+    // An optional asset failing should not prevent the app shell from installing.
+    await Promise.allSettled(APP_SHELL.map(async url => {
+      const response = await fetch(url, { cache: 'reload' });
+      if (response.ok) await cache.put(url, response);
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', event => {
-    event.waitUntil((async () => {
-        const names = await caches.keys();
-        await Promise.all(names
-            .filter(name => name.startsWith('civilaegis-') && ![SHELL_CACHE, VENDOR_CACHE].includes(name))
-            .map(name => caches.delete(name)));
-        await self.clients.claim();
-    })());
+  event.waitUntil((async () => {
+    const keep = new Set([SHELL_CACHE, RUNTIME_CACHE, VENDOR_CACHE, TILE_CACHE, DATA_CACHE]);
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter(key => key.startsWith(CACHE_PREFIX) && !keep.has(key))
+      .map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
-async function networkFirst(request, fallbackRequest) {
-    try {
-        const response = await fetch(request);
-        if (response && (response.ok || response.type === 'opaque')) {
-            const cache = await caches.open(SHELL_CACHE);
-            cache.put(fallbackRequest || request, response.clone()).catch(() => {});
-        }
-        return response;
-    } catch (error) {
-        const cached = await caches.match(request) || (fallbackRequest ? await caches.match(fallbackRequest) : null);
-        if (cached) return cached;
-        throw error;
-    }
+function isCacheable(response) {
+  return !!response && (response.ok || response.type === 'opaque');
 }
 
-async function cacheVendorResource(request) {
-    const cached = await caches.match(request, { ignoreVary: true });
-    try {
-        const response = await fetch(request);
-        if (response && (response.ok || response.type === 'opaque')) {
-            const cache = await caches.open(VENDOR_CACHE);
-            cache.put(request, response.clone()).catch(() => {});
-        }
-        return response;
-    } catch (error) {
-        if (cached) return cached;
-        throw error;
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  if (keys.length > maxEntries) {
+    await Promise.all(keys.slice(0, keys.length - maxEntries).map(key => cache.delete(key)));
+  }
+}
+
+async function cacheFirst(request, cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request, { ignoreVary: true });
+  if (cached) {
+    // Return local copy immediately; refresh quietly for the next visit.
+    fetch(request).then(async response => {
+      if (isCacheable(response)) {
+        await cache.put(request, response.clone());
+        if (maxEntries) await trimCache(cacheName, maxEntries);
+      }
+    }).catch(() => {});
+    return cached;
+  }
+  const response = await fetch(request);
+  if (isCacheable(response)) {
+    await cache.put(request, response.clone());
+    if (maxEntries) await trimCache(cacheName, maxEntries);
+  }
+  return response;
+}
+
+async function networkFirst(request, fallbackUrl, cacheName = RUNTIME_CACHE, maxEntries = MAX_RUNTIME_ENTRIES) {
+  const cache = await caches.open(cacheName);
+  try {
+    const response = await fetch(request);
+    if (isCacheable(response)) {
+      await cache.put(request, response.clone());
+      if (fallbackUrl) await cache.put(fallbackUrl, response.clone());
+      if (maxEntries) await trimCache(cacheName, maxEntries);
     }
+    return response;
+  } catch (error) {
+    const direct = await cache.match(request, { ignoreVary: true });
+    if (direct) return direct;
+    const fallback = fallbackUrl ? await caches.match(fallbackUrl, { ignoreVary: true }) : null;
+    if (fallback) return fallback;
+    throw error;
+  }
+}
+
+function isSameOrigin(url) {
+  return url.origin === self.location.origin;
+}
+
+function isTileRequest(url) {
+  return TILE_HOSTS.has(url.hostname) &&
+    /\/(?:\d+)\/(?:\d+)\/(?:\d+)(?:\.png|\.jpg|\.webp)?$/i.test(url.pathname);
+}
+
+function isLikelyDataRequest(url, request) {
+  if (['document', 'script', 'style', 'font', 'image'].includes(request.destination)) return false;
+  if (DATA_HOSTS.has(url.hostname)) return true;
+  return /\.(?:geojson|json)$/i.test(url.pathname);
 }
 
 self.addEventListener('fetch', event => {
@@ -101,9 +163,30 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // Cache essential vendor scripts/styles/fonts after their first successful online load.
-    // Public map tiles and live safety/routing API responses are intentionally excluded.
-    if (VENDOR_HOSTS.has(url.hostname)) {
-        event.respondWith(cacheVendorResource(request));
+  if (isSameOrigin(url)) {
+    if (url.pathname.endsWith('/manifest.json') ||
+        /\.(?:html|js|css|json|svg|png|webp|ico)$/i.test(url.pathname)) {
+      event.respondWith(cacheFirst(request, SHELL_CACHE, 100));
+    } else {
+      event.respondWith(networkFirst(request, null, RUNTIME_CACHE, MAX_RUNTIME_ENTRIES));
     }
+    return;
+  }
+
+  // Store only tiles the person has actually viewed while online.
+  if (isTileRequest(url)) {
+    event.respondWith(cacheFirst(request, TILE_CACHE, MAX_TILE_ENTRIES));
+    return;
+  }
+
+  if (VENDOR_HOSTS.has(url.hostname)) {
+    event.respondWith(cacheFirst(request, VENDOR_CACHE, 60));
+    return;
+  }
+
+  // Public GET feeds use network-first and fall back to the latest cached response.
+  // Browser CORS rules remain in force; the service worker cannot bypass them.
+  if (isLikelyDataRequest(url, request)) {
+    event.respondWith(networkFirst(request, null, DATA_CACHE, MAX_DATA_ENTRIES));
+  }
 });
