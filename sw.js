@@ -1,6 +1,19 @@
-const SHELL_CACHE = 'civilaegis-shell-v16';
+const SHELL_CACHE = 'civilaegis-shell-v17';
 const VENDOR_CACHE = 'civilaegis-vendor-v1';
-const APP_SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
+const APP_SHELL = [
+    './',
+    './index.html',
+    './manifest.json',
+    './icon.svg',
+    './icon/launchericon-48x48.png',
+    './icon/launchericon-72x72.png',
+    './icon/launchericon-96x96.png',
+    './icon/launchericon-144x144.png',
+    './icon/launchericon-192x192.png',
+    './icon/launchericon-512x512.png',
+    './icon/screenshot-laptop.png',
+    './icon/Mobile%20screenshot%20375x830.png'
+];
 const VENDOR_HOSTS = new Set([
     'cdn.tailwindcss.com',
     'unpkg.com',
