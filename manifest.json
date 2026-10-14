@@ -2,20 +2,76 @@
   "id": "./",
   "name": "CivilAegis Personal Safety Radar",
   "short_name": "CivilAegis",
-  "description": "Personal safety radar with saved one-way and round-trip journeys, turn instructions, and nearby hazard reports.",
+  "description": "A civilian safety radar combining location-aware public data, hazard context, news signals, and practical prevention guidance.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f8fafc",
   "theme_color": "#0f172a",
-  "categories": ["travel", "navigation", "safety"],
+  "categories": [
+    "travel",
+    "navigation",
+    "safety"
+  ],
   "icons": [
+    {
+      "src": "./icon/launchericon-48x48.png",
+      "sizes": "48x48",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon/launchericon-72x72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon/launchericon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon/launchericon-144x144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon/launchericon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon/launchericon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "./icon/screenshot-laptop.png",
+      "sizes": "1917x916",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "CivilAegis desktop safety radar showing map, nearby facilities, and safety overview"
+    },
+    {
+      "src": "./icon/Mobile%20screenshot%20375x830.png",
+      "sizes": "375x830",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "CivilAegis mobile safety radar showing location signals and recommendations"
     }
   ]
 }
