@@ -81,6 +81,24 @@
         .detail-action-primary { background: #2563eb; border-color: #2563eb; color: white; }
         .radar-filter-btn { padding: 6px 9px; border: 1px solid #e2e8f0; border-radius: 999px; background: #fff; color: #475569; font-size: 11px; font-weight: 700; white-space: nowrap; }
         .radar-filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+        /* Feed filters: explicit contrast so the selected pill never becomes white-on-white. */
+        #feed-filter-tabs { gap: 8px; padding: 3px 2px 10px; margin-bottom: 6px; scroll-padding-inline: 12px; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+        #feed-filter-tabs .filter-btn {
+            flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+            min-height: 36px; padding: 0 13px; border: 1px solid #cbd5e1 !important;
+            border-radius: 999px; background: #fff !important; color: #334155 !important;
+            font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap;
+            opacity: 1; transition: background-color .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+        }
+        #feed-filter-tabs .filter-btn:hover:not(.active) { background: #f1f5f9 !important; border-color: #94a3b8 !important; color: #0f172a !important; }
+        #feed-filter-tabs .filter-btn.active,
+        #feed-filter-tabs .filter-btn.active:hover {
+            background: #1d4ed8 !important; border-color: #1d4ed8 !important; color: #fff !important;
+            box-shadow: 0 2px 7px rgba(29,78,216,.24);
+        }
+        #feed-filter-tabs .filter-btn:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+        #feed-filter-tabs .filter-btn:active { transform: translateY(1px); }
         .radar-intel-item { width: 100%; text-align: left; display: flex; gap: 9px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
         .radar-intel-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; border-radius: 9px; color: white; }
         .radar-intel-title { color: #0f172a; font-size: 12px; line-height: 1.35; font-weight: 700; }
@@ -590,12 +608,12 @@
             </h2>
             
             <p class="text-sm text-slate-500 -mt-2 mb-4">Safety guidance and local signals. Recommendations are in English and do not replace official instructions.</p>
-            <div class="flex gap-2 overflow-x-auto pb-4 mb-2 no-scrollbar">
-                <button id="feed-filter-guide" onclick="filterFeed('guide', this)" class="filter-btn active px-4 py-1.5 rounded-full text-xs font-semibold bg-primary text-white whitespace-nowrap shadow-sm shadow-blue-200">Recommendations</button>
-                <button id="feed-filter-all" onclick="filterFeed('all', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">All signals</button>
-                <button id="feed-filter-incidents" onclick="filterFeed('incidents', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Incident reports</button>
-                <button id="feed-filter-news" onclick="filterFeed('news', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">News &amp; OSINT</button>
-                <button id="feed-filter-safe" onclick="filterFeed('safezone', this)" class="filter-btn px-4 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50">Emergency services</button>
+            <div id="feed-filter-tabs" class="flex gap-2 overflow-x-auto mb-2 no-scrollbar" role="group" aria-label="Filter safety feed">
+                <button type="button" id="feed-filter-guide" aria-pressed="true" onclick="filterFeed('guide', this)" class="filter-btn active">Recommendations</button>
+                <button type="button" id="feed-filter-all" aria-pressed="false" onclick="filterFeed('all', this)" class="filter-btn">All signals</button>
+                <button type="button" id="feed-filter-incidents" aria-pressed="false" onclick="filterFeed('incidents', this)" class="filter-btn">Incident reports</button>
+                <button type="button" id="feed-filter-news" aria-pressed="false" onclick="filterFeed('news', this)" class="filter-btn">News &amp; OSINT</button>
+                <button type="button" id="feed-filter-safe" aria-pressed="false" onclick="filterFeed('safezone', this)" class="filter-btn">Emergency services</button>
             </div>
 
             <section id="safety-recommendations" class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4" aria-label="Safety recommendations"></section>
@@ -3626,13 +3644,30 @@
         // --- FEED & SAVED VIEWS ---
         function filterFeed(type, button) {
             activeFeedFilter = type;
-            document.querySelectorAll('.filter-btn').forEach(btn => {
+            const buttons = document.querySelectorAll('#feed-filter-tabs .filter-btn');
+            buttons.forEach(btn => {
                 btn.classList.remove('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200', 'active');
                 btn.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+                btn.setAttribute('aria-pressed', 'false');
             });
             if (button) {
                 button.classList.remove('bg-white', 'text-slate-600', 'border-slate-200');
                 button.classList.add('bg-primary', 'text-white', 'shadow-sm', 'shadow-blue-200', 'active');
+                button.setAttribute('aria-pressed', 'true');
+
+                // Keep the selected filter fully visible in the horizontally scrolling mobile strip.
+                const strip = document.getElementById('feed-filter-tabs');
+                if (strip) {
+                    const buttonRect = button.getBoundingClientRect();
+                    const stripRect = strip.getBoundingClientRect();
+                    const itemLeft = buttonRect.left - stripRect.left + strip.scrollLeft;
+                    const itemRight = itemLeft + buttonRect.width;
+                    if (itemLeft < strip.scrollLeft) {
+                        strip.scrollTo({ left: Math.max(0, itemLeft - 8), behavior: 'smooth' });
+                    } else if (itemRight > strip.scrollLeft + strip.clientWidth) {
+                        strip.scrollTo({ left: itemRight - strip.clientWidth + 8, behavior: 'smooth' });
+                    }
+                }
             }
             renderFeed(type);
         }
