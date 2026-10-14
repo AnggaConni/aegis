@@ -19,7 +19,12 @@ TinyFish Search and Fetch are currently listed as free; paid Agent/Browser servi
 - One-way and round-trip driving route planning
 - Route corridor checks against currently available mapped hazard data
 - Saved reports, trip plans, and PDF export
-- PWA shell and selected vendor-resource caching for limited offline use
+- PWA shell, launcher icons, and app screenshots are precached for offline shell use; selected vendor resources are cached after first online use
+
+
+### Offline behavior
+
+The app shell, manifest, launcher icons, and product screenshots are precached by the service worker, and selected third-party scripts/styles/fonts are cached after a successful online load. Live hazard/news/routing APIs still require connectivity. The standard OpenStreetMap tile server (tile.openstreetmap.org) does not permit offline map use or tile prefetching, so this configuration deliberately does not cache map tiles for offline display. For a true offline basemap, switch to a provider whose licence explicitly permits offline use or host your own tiles. See the [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
 
 ## Safety and data limitations
 

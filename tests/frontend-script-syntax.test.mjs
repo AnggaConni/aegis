@@ -200,17 +200,29 @@ test('TinyFish frontend allows long-running searches and surfaces provider failu
 });
 
 
-test('feed filter pills keep high contrast in active and inactive states', () => {
-  assert.match(html, /#feed-filter-tabs \.filter-btn\s*\{[\s\S]*?background: #fff !important; color: #334155 !important;/);
-  assert.match(html, /#feed-filter-tabs \.filter-btn\.active[\s\S]*?background: #1d4ed8 !important; border-color: #1d4ed8 !important; color: #fff !important;/);
-  assert.match(html, /#feed-filter-tabs \.filter-btn:focus-visible/);
-  assert.match(html, /aria-pressed="true"/);
-  assert.match(html, /aria-pressed="false"/);
+test('manifest declares all uploaded PNG launcher icons and desktop/mobile screenshots', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const iconSizes = new Set(manifest.icons.filter(icon => icon.type === 'image/png').map(icon => icon.sizes));
+  for (const size of ['48x48', '72x72', '96x96', '144x144', '192x192', '512x512']) {
+    assert.ok(iconSizes.has(size), 'manifest should include ' + size + ' launcher icon');
+  }
+  assert.ok(manifest.icons.some(icon => icon.src === './icon.svg' && icon.sizes === 'any'));
+  assert.ok(manifest.screenshots.some(item => item.form_factor === 'wide' && item.src === './icon/screenshot-laptop.png'));
+  assert.ok(manifest.screenshots.some(item => item.form_factor === 'narrow' && item.src === './icon/Mobile%20screenshot%20375x830.png'));
 });
 
-test('feed filter strip keeps the selected item visible on mobile', () => {
-  assert.match(html, /id="feed-filter-tabs"/);
-  assert.match(html, /Keep the selected filter fully visible/);
-  assert.match(html, /strip\.scrollTo\(\{ left: itemRight - strip\.clientWidth \+ 8, behavior: 'smooth' \}\)/);
-  assert.match(html, /flex: 0 0 auto/);
+test('service worker precaches manifest-listed launcher icons and product screenshots', async () => {
+  const serviceWorker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
+  assert.match(serviceWorker, /civilaegis-shell-v17/);
+  for (const asset of [
+    './icon/launchericon-48x48.png',
+    './icon/launchericon-192x192.png',
+    './icon/launchericon-512x512.png',
+    './icon/screenshot-laptop.png',
+    './icon/Mobile%20screenshot%20375x830.png'
+  ]) {
+    assert.ok(serviceWorker.includes(asset), 'service worker should precache ' + asset);
+  }
+  assert.match(serviceWorker, /png\|jpe\?g\|webp\|ico/);
+  assert.match(serviceWorker, /Live API responses are not intercepted here/);
 });

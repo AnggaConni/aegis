@@ -1,30 +1,19 @@
-/* CivilAegis service worker — GitHub Pages + offline-first cache.
- * Cached alerts may be stale. Offline mode does not verify live conditions.
- */
-const APP_VERSION = 'v17';
-const CACHE_PREFIX = 'civilaegis-';
-const SHELL_CACHE = CACHE_PREFIX + 'shell-' + APP_VERSION;
-const RUNTIME_CACHE = CACHE_PREFIX + 'runtime-' + APP_VERSION;
-const VENDOR_CACHE = CACHE_PREFIX + 'vendor-' + APP_VERSION;
-const TILE_CACHE = CACHE_PREFIX + 'tiles-' + APP_VERSION;
-const DATA_CACHE = CACHE_PREFIX + 'data-' + APP_VERSION;
-
-const BASE_PATH = new URL('./', self.location.href);
+const SHELL_CACHE = 'civilaegis-shell-v17';
+const VENDOR_CACHE = 'civilaegis-vendor-v1';
 const APP_SHELL = [
-  new URL('./', BASE_PATH).href,
-  new URL('./index.html', BASE_PATH).href,
-  new URL('./manifest.json', BASE_PATH).href,
-  new URL('./icon.svg', BASE_PATH).href,
-  new URL('./icon/launchericon-48x48.png', BASE_PATH).href,
-  new URL('./icon/launchericon-72x72.png', BASE_PATH).href,
-  new URL('./icon/launchericon-96x96.png', BASE_PATH).href,
-  new URL('./icon/launchericon-144x144.png', BASE_PATH).href,
-  new URL('./icon/launchericon-192x192.png', BASE_PATH).href,
-  new URL('./icon/launchericon-512x512.png', BASE_PATH).href,
-  new URL('./icon/screenshot-laptop.png', BASE_PATH).href,
-  new URL('./icon/Mobile%20screenshot%20375x830.png', BASE_PATH).href
+    './',
+    './index.html',
+    './manifest.json',
+    './icon.svg',
+    './icon/launchericon-48x48.png',
+    './icon/launchericon-72x72.png',
+    './icon/launchericon-96x96.png',
+    './icon/launchericon-144x144.png',
+    './icon/launchericon-192x192.png',
+    './icon/launchericon-512x512.png',
+    './icon/screenshot-laptop.png',
+    './icon/Mobile%20screenshot%20375x830.png'
 ];
-
 const VENDOR_HOSTS = new Set([
   'cdn.tailwindcss.com',
   'unpkg.com',
@@ -144,20 +133,35 @@ function isLikelyDataRequest(url, request) {
 }
 
 self.addEventListener('fetch', event => {
-  const request = event.request;
-  if (request.method !== 'GET') return;
-  const url = new URL(request.url);
+    const request = event.request;
+    if (request.method !== 'GET') return;
 
-  // Network-first document with a reliable app-shell fallback.
-  if (request.mode === 'navigate' && isSameOrigin(url)) {
-    event.respondWith(networkFirst(
-      request,
-      new URL('./index.html', BASE_PATH).href,
-      RUNTIME_CACHE,
-      MAX_RUNTIME_ENTRIES
-    ));
-    return;
-  }
+    const url = new URL(request.url);
+    if (url.origin === self.location.origin) {
+        if (request.mode === 'navigate') {
+            event.respondWith(networkFirst(request, new URL('./index.html', self.location.href).toString()));
+            return;
+        }
+
+        // Cache same-origin app assets, icons, and screenshots. Live API responses are not intercepted here.
+        if (/\.(?:html|json|svg|css|js|png|jpe?g|webp|ico)$/.test(url.pathname) || url.pathname.endsWith('/')) {
+            event.respondWith((async () => {
+                const cached = await caches.match(request);
+                if (cached) {
+                    // Refresh app assets in the background so future offline sessions have the latest copy.
+                    fetch(request).then(async response => {
+                        if (response && response.ok) {
+                            const cache = await caches.open(SHELL_CACHE);
+                            await cache.put(request, response.clone());
+                        }
+                    }).catch(() => {});
+                    return cached;
+                }
+                return networkFirst(request);
+            })());
+        }
+        return;
+    }
 
   if (isSameOrigin(url)) {
     if (url.pathname.endsWith('/manifest.json') ||
