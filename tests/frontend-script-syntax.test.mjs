@@ -198,3 +198,31 @@ test('TinyFish frontend allows long-running searches and surfaces provider failu
   assert.match(html, /statusLabel = 'Network\/CORS error'/);
   assert.match(html, /statusNode\.title = reasons\.length/);
 });
+
+
+test('manifest declares all uploaded PNG launcher icons and desktop/mobile screenshots', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const iconSizes = new Set(manifest.icons.filter(icon => icon.type === 'image/png').map(icon => icon.sizes));
+  for (const size of ['48x48', '72x72', '96x96', '144x144', '192x192', '512x512']) {
+    assert.ok(iconSizes.has(size), 'manifest should include ' + size + ' launcher icon');
+  }
+  assert.ok(manifest.icons.some(icon => icon.src === './icon.svg' && icon.sizes === 'any'));
+  assert.ok(manifest.screenshots.some(item => item.form_factor === 'wide' && item.src === './icon/screenshot-laptop.png'));
+  assert.ok(manifest.screenshots.some(item => item.form_factor === 'narrow' && item.src === './icon/Mobile%20screenshot%20375x830.png'));
+});
+
+test('service worker precaches manifest-listed launcher icons and product screenshots', async () => {
+  const serviceWorker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
+  assert.match(serviceWorker, /civilaegis-shell-v17/);
+  for (const asset of [
+    './icon/launchericon-48x48.png',
+    './icon/launchericon-192x192.png',
+    './icon/launchericon-512x512.png',
+    './icon/screenshot-laptop.png',
+    './icon/Mobile%20screenshot%20375x830.png'
+  ]) {
+    assert.ok(serviceWorker.includes(asset), 'service worker should precache ' + asset);
+  }
+  assert.match(serviceWorker, /png\|jpe\?g\|webp\|ico/);
+  assert.match(serviceWorker, /Live API responses are not intercepted here/);
+});
