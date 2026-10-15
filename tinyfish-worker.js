@@ -871,6 +871,74 @@ function bucketForParsedDate(ageDays, parsed, nowMs) {
     return bucketForAge(ageDays);
 }
 
+const SEMANTIC_SCHOLAR_REQUEST_WINDOW_MS = 60 * 1000;
+const SEMANTIC_SCHOLAR_REQUEST_MAX = 10;
+const semanticScholarRequestTimes = new Map();
+
+function isSemanticScholarRateLimited(request, nowMs = Date.now()) {
+    const clientIp = request.headers.get('CF-Connecting-IP');
+    if (!clientIp) return false; // Unit tests and local runtimes may not include a trusted IP.
+    const recent = (semanticScholarRequestTimes.get(clientIp) || [])
+        .filter(timestamp => nowMs - timestamp < SEMANTIC_SCHOLAR_REQUEST_WINDOW_MS);
+    if (recent.length >= SEMANTIC_SCHOLAR_REQUEST_MAX) {
+        semanticScholarRequestTimes.set(clientIp, recent);
+        return true;
+    }
+    recent.push(nowMs);
+    semanticScholarRequestTimes.set(clientIp, recent);
+    if (semanticScholarRequestTimes.size > 5000) {
+        for (const [ip, timestamps] of semanticScholarRequestTimes.entries()) {
+            if (!timestamps.some(timestamp => nowMs - timestamp < SEMANTIC_SCHOLAR_REQUEST_WINDOW_MS)) {
+                semanticScholarRequestTimes.delete(ip);
+            }
+        }
+    }
+    return false;
+}
+
+async function handleSemanticScholarRequest(url, request, env, corsOrigin) {
+    const query = String(url.searchParams.get('query') || '').trim().replace(/\\s+/g, ' ');
+    if (query.length < 3 || query.length > 400) {
+        return jsonResponse({ error: 'Query must contain 3–400 characters.' }, 400, corsOrigin);
+    }
+    if (isSemanticScholarRateLimited(request)) {
+        return jsonResponse({ error: 'Semantic Scholar proxy rate limit reached. Please wait one minute.' }, 429, corsOrigin);
+    }
+
+    const upstreamUrl = new URL('https://api.semanticscholar.org/graph/v1/paper/search');
+    upstreamUrl.searchParams.set('query', query);
+    upstreamUrl.searchParams.set('limit', '8');
+    upstreamUrl.searchParams.set('fields', 'title,year,authors,citationCount,url,abstract,openAccessPdf,externalIds,publicationVenue,isOpenAccess');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+        const headers = { 'Accept': 'application/json' };
+        if (env && env.SEMANTIC_SCHOLAR_API_KEY) {
+            headers['x-api-key'] = env.SEMANTIC_SCHOLAR_API_KEY;
+        }
+        const upstream = await fetch(upstreamUrl.toString(), {
+            method: 'GET',
+            headers,
+            signal: controller.signal
+        });
+        let payload;
+        try {
+            payload = await upstream.json();
+        } catch (_) {
+            payload = { error: 'Semantic Scholar returned a non-JSON response.' };
+        }
+        return jsonResponse(payload, upstream.status, corsOrigin);
+    } catch (error) {
+        if (error && error.name === 'AbortError') {
+            return jsonResponse({ error: 'Semantic Scholar request timed out after 12 seconds.' }, 504, corsOrigin);
+        }
+        return jsonResponse({ error: 'Semantic Scholar upstream request failed.' }, 502, corsOrigin);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
@@ -890,6 +958,9 @@ export default {
             }});
         }
         if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
+        if (url.pathname === '/semantic-scholar') {
+            return handleSemanticScholarRequest(url, request, env || {}, corsOrigin);
+        }
         if (url.pathname !== '/nearby-intel') return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
         if (!env.TINYFISH_API_KEY) return jsonResponse({ error: 'Worker secret TINYFISH_API_KEY is not configured' }, 503, corsOrigin);
         if (isClientRateLimited(request)) {
