@@ -897,7 +897,7 @@ function isSemanticScholarRateLimited(request, nowMs = Date.now()) {
 }
 
 async function handleSemanticScholarRequest(url, request, env, corsOrigin) {
-    const query = String(url.searchParams.get('query') || '').trim().replace(/\\s+/g, ' ');
+    const query = String(url.searchParams.get('query') || '').trim().replace(/\s+/g, ' ');
     if (query.length < 3 || query.length > 400) {
         return jsonResponse({ error: 'Query must contain 3–400 characters.' }, 400, corsOrigin);
     }
