@@ -86,7 +86,7 @@ function isSiteIntelRateLimited(request, nowMs = Date.now()) {
 }
 
 function cleanSiteIntelText(value, maxLength) {
-    return String(value || '').replace(/[\\u0000-\\u001f\\u007f]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, maxLength);
+    return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 function isSiteIntelWebUrl(value) {
@@ -99,7 +99,7 @@ function isSiteIntelWebUrl(value) {
 }
 
 function siteIntelDomain(value) {
-    try { return new URL(value).hostname.replace(/^www\\./i, ''); } catch (_) { return ''; }
+    try { return new URL(value).hostname.replace(/^www\./i, ''); } catch (_) { return ''; }
 }
 
 function siteIntelResponse(scope, site, country, status, items, extra = {}) {
