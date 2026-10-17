@@ -60,6 +60,203 @@ function extractResults(payload) {
     return [];
 }
 
+
+const SITE_INTEL_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const SITE_INTEL_RATE_LIMIT_MAX = 12;
+const SITE_INTEL_NEWS_TTL_SECONDS = 3 * 60 * 60;
+const SITE_INTEL_RESEARCH_TTL_SECONDS = 24 * 60 * 60;
+const siteIntelRequestTimes = new Map();
+
+function isSiteIntelRateLimited(request, nowMs = Date.now()) {
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (!ip) return false;
+    const recent = (siteIntelRequestTimes.get(ip) || []).filter(at => nowMs - at < SITE_INTEL_RATE_LIMIT_WINDOW_MS);
+    if (recent.length >= SITE_INTEL_RATE_LIMIT_MAX) {
+        siteIntelRequestTimes.set(ip, recent);
+        return true;
+    }
+    recent.push(nowMs);
+    siteIntelRequestTimes.set(ip, recent);
+    if (siteIntelRequestTimes.size > 5000) {
+        for (const [key, times] of siteIntelRequestTimes.entries()) {
+            if (!times.some(at => nowMs - at < SITE_INTEL_RATE_LIMIT_WINDOW_MS)) siteIntelRequestTimes.delete(key);
+        }
+    }
+    return false;
+}
+
+function cleanSiteIntelText(value, maxLength) {
+    return String(value || '').replace(/[\\u0000-\\u001f\\u007f]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function isSiteIntelWebUrl(value) {
+    try {
+        const url = new URL(String(value || ''));
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (_) {
+        return false;
+    }
+}
+
+function siteIntelDomain(value) {
+    try { return new URL(value).hostname.replace(/^www\\./i, ''); } catch (_) { return ''; }
+}
+
+function siteIntelResponse(scope, site, country, status, items, extra = {}) {
+    return {
+        schemaVersion: '1.0.0',
+        site: { name: site, country: country || null },
+        scope,
+        provider: scope === 'news' ? 'TinyFish Search' : 'OpenAlex',
+        status,
+        fetchedAt: new Date().toISOString(),
+        count: items.length,
+        items,
+        provenance: {
+            sourceUrl: scope === 'news' ? 'https://api.search.tinyfish.ai/' : 'https://api.openalex.org/works',
+            cachePolicy: scope === 'news' ? '3 hours' : '24 hours',
+            interpretation: scope === 'news'
+                ? 'Search results are unverified source leads. Check the original publisher, date, location, and claims.'
+                : 'Search relevance is approximate. Check each publication and abstract to confirm site-specific relevance.'
+        },
+        ...extra
+    };
+}
+
+function normalizeSiteIntelNews(payload) {
+    const rows = extractResults(payload);
+    const seen = new Set();
+    const items = [];
+    for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        const url = String(row.url || row.link || row.href || row.sourceUrl || '');
+        if (!isSiteIntelWebUrl(url) || seen.has(url)) continue;
+        const title = cleanSiteIntelText(row.title || row.name || row.headline || '', 240);
+        if (!title) continue;
+        seen.add(url);
+        const rawDate = row.publishedAt || row.published_at || row.date || row.pubDate || row.published || null;
+        let publishedAt = null;
+        if (rawDate) {
+            const stamp = Date.parse(String(rawDate));
+            if (Number.isFinite(stamp) && stamp > 0 && stamp <= Date.now() + 86400000) publishedAt = new Date(stamp).toISOString();
+        }
+        items.push({
+            id: url,
+            title,
+            snippet: cleanSiteIntelText(row.snippet || row.description || row.content || row.summary || '', 650),
+            url,
+            source: cleanSiteIntelText(row.source || row.publisher || siteIntelDomain(url), 100),
+            publishedAt,
+            publishedAtRaw: rawDate ? cleanSiteIntelText(rawDate, 100) : null,
+            dateStatus: publishedAt ? 'parsed-source-date' : 'unconfirmed',
+            evidenceStatus: 'unverified-source-lead'
+        });
+        if (items.length >= 8) break;
+    }
+    return items;
+}
+
+function normalizeSiteIntelWorks(payload) {
+    const rows = payload && Array.isArray(payload.results) ? payload.results : [];
+    return rows.slice(0, 8).map(work => {
+        const authors = (Array.isArray(work.authorships) ? work.authorships : [])
+            .slice(0, 4)
+            .map(entry => cleanSiteIntelText(entry.author && entry.author.display_name, 100))
+            .filter(Boolean);
+        const host = work.primary_location && work.primary_location.source
+            ? cleanSiteIntelText(work.primary_location.source.display_name, 180) : '';
+        const landing = work.primary_location && work.primary_location.landing_page_url;
+        const openAccess = work.open_access || {};
+        const doiUrl = isSiteIntelWebUrl(work.doi) ? work.doi : '';
+        const openAlexUrl = work.id && isSiteIntelWebUrl(work.id) ? work.id : '';
+        const openAccessUrl = isSiteIntelWebUrl(openAccess.oa_url) ? openAccess.oa_url : '';
+        const url = openAccessUrl || (isSiteIntelWebUrl(landing) ? landing : '') || doiUrl || openAlexUrl;
+        return {
+            id: String(work.id || work.doi || work.title || ''),
+            title: cleanSiteIntelText(work.title || 'Untitled work', 300),
+            year: work.publication_year != null && Number.isFinite(Number(work.publication_year)) ? Number(work.publication_year) : null,
+            type: cleanSiteIntelText(work.type || 'work', 60),
+            authors,
+            source: host,
+            doi: doiUrl || null,
+            url: url || openAlexUrl || 'https://openalex.org/',
+            openAlexUrl: openAlexUrl || null,
+            citedByCount: Number.isFinite(Number(work.cited_by_count)) ? Number(work.cited_by_count) : 0,
+            isOpenAccess: Boolean(openAccess.is_oa),
+            openAccessUrl: openAccessUrl || null
+        };
+    }).filter(item => item.title);
+}
+
+async function fetchSiteIntelNews(site, country, env) {
+    if (!env.TINYFISH_API_KEY) {
+        return siteIntelResponse('news', site, country, 'not_configured', [], {
+            message: 'TinyFish is not configured on this Worker. Add TINYFISH_API_KEY as a Worker secret.'
+        });
+    }
+    const query = [
+        'Find recent public web/news sources about the UNESCO-designated place "' + site + '"',
+        country ? 'in ' + country : '',
+        'cover conservation, heritage protection, management, research, local communities, visitor impacts, climate and environmental change.',
+        'Return concise titles, snippets, original publisher URLs, and publication dates when available.',
+        'Prefer credible publishers and official organisations. Do not invent dates or sources.'
+    ].filter(Boolean).join(' ');
+    const endpoint = new URL('https://api.search.tinyfish.ai/');
+    endpoint.searchParams.set('query', query);
+    try {
+        const upstream = await fetch(endpoint.toString(), {
+            method: 'GET',
+            headers: { 'X-API-Key': env.TINYFISH_API_KEY, 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(TINYFISH_SEARCH_TIMEOUT_MS)
+        });
+        if (!upstream.ok) {
+            return siteIntelResponse('news', site, country, 'upstream_error', [], {
+                message: upstream.status === 429 ? 'TinyFish rate limit reached; try again later.' : 'TinyFish returned HTTP ' + upstream.status + '.'
+            });
+        }
+        const payload = await upstream.json();
+        return siteIntelResponse('news', site, country, 'ok', normalizeSiteIntelNews(payload), {
+            diagnostics: { rawResultCount: extractResults(payload).length }
+        });
+    } catch (error) {
+        const timedOut = error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+        return siteIntelResponse('news', site, country, timedOut ? 'timeout' : 'unavailable', [], {
+            message: timedOut ? 'TinyFish search timed out. Retry later.' : 'TinyFish could not be reached. Retry later.'
+        });
+    }
+}
+
+async function fetchSiteIntelResearch(site, country, env) {
+    const endpoint = new URL('https://api.openalex.org/works');
+    endpoint.searchParams.set('search', site);
+    endpoint.searchParams.set('per-page', '8');
+    endpoint.searchParams.set('select', 'id,doi,title,publication_year,type,authorships,primary_location,cited_by_count,open_access');
+    const headers = { 'Accept': 'application/json' };
+    if (env.OPENALEX_API_KEY) headers.Authorization = 'Bearer ' + env.OPENALEX_API_KEY;
+    try {
+        const upstream = await fetch(endpoint.toString(), {
+            method: 'GET',
+            headers,
+            signal: AbortSignal.timeout(TINYFISH_SEARCH_TIMEOUT_MS)
+        });
+        if (!upstream.ok) {
+            return siteIntelResponse('research', site, country, 'upstream_error', [], {
+                message: upstream.status === 429 ? 'OpenAlex rate limit reached; try again later.' : 'OpenAlex returned HTTP ' + upstream.status + '.'
+            });
+        }
+        const payload = await upstream.json();
+        return siteIntelResponse('research', site, country, 'ok', normalizeSiteIntelWorks(payload), {
+            totalAvailable: Number(payload.meta && payload.meta.count || 0),
+            query: site
+        });
+    } catch (error) {
+        const timedOut = error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+        return siteIntelResponse('research', site, country, timedOut ? 'timeout' : 'unavailable', [], {
+            message: timedOut ? 'OpenAlex search timed out. Retry later.' : 'OpenAlex could not be reached. Retry later.'
+        });
+    }
+}
+
 function normalize(value) {
     return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -890,6 +1087,45 @@ export default {
             }});
         }
         if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
+        if (url.pathname === '/health') {
+            return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel'] }, 200, corsOrigin);
+        }
+        if (url.pathname === '/site-intel') {
+            if (isSiteIntelRateLimited(request)) {
+                return jsonResponse({ error: 'Too many Site Intelligence requests; wait a minute before retrying.' }, 429, corsOrigin);
+            }
+            const site = cleanSiteIntelText(url.searchParams.get('site'), 140);
+            const country = cleanSiteIntelText(url.searchParams.get('country'), 80);
+            const scope = String(url.searchParams.get('scope') || 'news').toLowerCase();
+            if (site.length < 2) return jsonResponse({ error: 'A site name of at least two characters is required.' }, 400, corsOrigin);
+            if (!['news', 'research'].includes(scope)) return jsonResponse({ error: 'scope must be news or research.' }, 400, corsOrigin);
+
+            const cacheUrl = new URL('/_cache/site-intel-v1', url.origin);
+            cacheUrl.searchParams.set('scope', scope);
+            cacheUrl.searchParams.set('site', site.toLocaleLowerCase());
+            cacheUrl.searchParams.set('country', country.toLocaleLowerCase());
+            const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+            try {
+                const cachedResponse = await caches.default.match(cacheKey);
+                if (cachedResponse) return jsonResponse({ ...(await cachedResponse.json()), cached: true }, 200, corsOrigin);
+            } catch (_) {}
+
+            const body = scope === 'news'
+                ? await fetchSiteIntelNews(site, country, env)
+                : await fetchSiteIntelResearch(site, country, env);
+            if (body.status === 'ok') {
+                try {
+                    const ttl = scope === 'news' ? SITE_INTEL_NEWS_TTL_SECONDS : SITE_INTEL_RESEARCH_TTL_SECONDS;
+                    const cacheResponse = new Response(JSON.stringify(body), {
+                        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=' + ttl }
+                    });
+                    const write = caches.default.put(cacheKey, cacheResponse);
+                    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(write);
+                    else await write;
+                } catch (_) {}
+            }
+            return jsonResponse(body, 200, corsOrigin);
+        }
         if (url.pathname !== '/nearby-intel') return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
         if (!env.TINYFISH_API_KEY) return jsonResponse({ error: 'Worker secret TINYFISH_API_KEY is not configured' }, 503, corsOrigin);
         if (isClientRateLimited(request)) {
