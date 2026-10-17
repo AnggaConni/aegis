@@ -99,3 +99,28 @@ TinyFish currently lists Search as free at 30 requests per minute and 500 reques
 The Worker keeps the API key server-side. It includes a cache, a timeout for TinyFish Search and reverse geocoding, per-window failure diagnostics, a cap on rows enriched per search pass, and a best-effort per-isolate request guard. The browser waits up to 60 seconds for the three search windows and displays a brief error class such as `Search timeout`, `Rate limited`, `Worker secret missing`, or `API key rejected`; hover/tap title text on the TinyFish status gives window-level details where the browser supports it. The isolate-local guard is not a globally atomic quota; add a Cloudflare edge rate-limiting rule if the endpoint needs stronger abuse protection.
 
 Do not put `TINYFISH_API_KEY` in frontend code or a public GitHub file. GitHub Actions secrets are only made available to workflows that explicitly reference them; they are not private runtime variables for GitHub Pages.
+
+
+## Shared Site Intelligence route for World Heritage Atlas
+
+The same Worker can serve both CivilAegis's existing safety endpoint and the World Heritage Atlas Site Intelligence dossier. This is an additive route; the existing `/nearby-intel` behaviour is not changed.
+
+- Health: `GET /health`
+- Heritage news: `GET /site-intel?scope=news&site=Borobudur%20Temple&country=Indonesia`
+- Scholarly metadata: `GET /site-intel?scope=research&site=Borobudur%20Temple&country=Indonesia`
+
+The `news` scope uses the existing `TINYFISH_API_KEY` Worker secret. The `research` scope queries OpenAlex and can use the optional `OPENALEX_API_KEY` secret; the key is not exposed to the browser. Responses include provider status, source URLs and provenance. News items remain unverified source leads, not confirmed claims or incident reports.
+
+The allowed browser origin defaults to `https://anggaconni.github.io`. Add additional origins only when needed, separated by commas in the `ALLOWED_ORIGINS` Worker variable. Site Intelligence uses its own best-effort rate guard and separate edge-cache keys so it does not share result-cache entries with `/nearby-intel`.
+
+### Deploying the route
+
+After this code is merged, deploy the Worker using the deployment method already used for CivilAegis. From a locally authenticated checkout of this repository, run:
+
+```bash
+npx wrangler deploy --config wrangler.jsonc
+```
+
+The existing `TINYFISH_API_KEY` must remain set as a Cloudflare Worker secret. `OPENALEX_API_KEY` is optional. Do not put either key in the World Heritage Atlas frontend or commit secret values.
+
+Verify `/health` first, then test one `/site-intel?scope=news...` request and one `/site-intel?scope=research...` request. The app should call `https://civilaegis-tinyfish-proxy.conniezz-cool.workers.dev/site-intel`; its original safety integration continues to call `/nearby-intel`.
