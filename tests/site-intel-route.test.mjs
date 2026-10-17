@@ -56,7 +56,7 @@ test('health endpoint reports the shared Worker routes', async () => {
 
 test('site news route forwards a scoped query through TinyFish and normalizes results', async () => {
   let upstreamCalls = 0;
-  const { response, body } = await requestWorker('/site-intel?scope=news&site=Borobudur%20Temple&country=Indonesia', {
+  const { response, body, mockError } = await requestWorker('/site-intel?scope=news&site=Borobudur%20Temple&country=Indonesia', {
     tinyfishKey: 'test-tinyfish-key',
     fetchMock: async (input, init) => {
       upstreamCalls += 1;
@@ -74,8 +74,7 @@ test('site news route forwards a scoped query through TinyFish and normalizes re
   assert.equal(upstreamCalls, 1);
   assert.equal(body.scope, 'news');
   assert.equal(body.provider, 'TinyFish Search');
-  assert.equal(body.status, 'ok');
-  assert.equal((await Promise.resolve(undefined)), undefined);
+  assert.equal(body.status, 'ok', (mockError && mockError.stack) || body.message || 'No mock error captured');
   assert.equal(body.count, 1);
   assert.equal(body.items[0].title, 'Borobudur conservation update');
   assert.equal(body.items[0].publishedAt, '2026-10-15T00:00:00.000Z');
@@ -90,7 +89,7 @@ test('site news route explains a missing TinyFish secret without a transport err
 });
 
 test('site research route normalizes OpenAlex works', async () => {
-  const { response, body } = await requestWorker('/site-intel?scope=research&site=Komodo%20National%20Park&country=Indonesia', {
+  const { response, body, mockError } = await requestWorker('/site-intel?scope=research&site=Komodo%20National%20Park&country=Indonesia', {
     fetchMock: async input => {
       const url = new URL(typeof input === 'string' ? input : input.url);
       assert.equal(url.hostname, 'api.openalex.org');
@@ -115,7 +114,7 @@ test('site research route normalizes OpenAlex works', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.scope, 'research');
   assert.equal(body.provider, 'OpenAlex');
-  assert.equal(body.status, 'ok');
+  assert.equal(body.status, 'ok', (mockError && mockError.stack) || body.message || 'No mock error captured');
   assert.equal(body.count, 1);
   assert.equal(body.items[0].year, 2025);
   assert.deepEqual(body.items[0].authors, ['A. Researcher']);
