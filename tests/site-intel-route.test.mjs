@@ -17,10 +17,16 @@ async function requestWorker(path, options = {}) {
       put: async (key, response) => cache.set(key.url, response.clone())
     }
   };
-  globalThis.fetch = options.fetchMock || (async () => new Response(JSON.stringify({ results: [] }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  }));
+  let mockError = null;
+  globalThis.fetch = options.fetchMock
+    ? async (...args) => {
+        try { return await options.fetchMock(...args); }
+        catch (error) { mockError = error; throw error; }
+      }
+    : async () => new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
 
   try {
     const request = new Request('https://civilaegis.test' + path, {
@@ -32,7 +38,7 @@ async function requestWorker(path, options = {}) {
       OPENALEX_API_KEY: options.openAlexKey,
       ALLOWED_ORIGINS: 'https://anggaconni.github.io'
     }, { waitUntil: promise => promise });
-    return { response, body: await response.json() };
+    return { response, body: await response.json(), mockError };
   } finally {
     globalThis.fetch = originalFetch;
     if (originalCaches === undefined) delete globalThis.caches;
@@ -69,6 +75,7 @@ test('site news route forwards a scoped query through TinyFish and normalizes re
   assert.equal(body.scope, 'news');
   assert.equal(body.provider, 'TinyFish Search');
   assert.equal(body.status, 'ok');
+  assert.equal((await Promise.resolve(undefined)), undefined);
   assert.equal(body.count, 1);
   assert.equal(body.items[0].title, 'Borobudur conservation update');
   assert.equal(body.items[0].publishedAt, '2026-10-15T00:00:00.000Z');
