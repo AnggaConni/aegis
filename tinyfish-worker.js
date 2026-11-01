@@ -1088,41 +1088,26 @@ export default {
         }
         if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
         if (url.pathname === '/health') {
-            return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel', '/public-cameras', '/public-webcams', '/public-webcams/stream'] }, 200, corsOrigin);
+            return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel', '/public-cameras', '/osiris-cctv'] }, 200, corsOrigin);
         }
-        if (url.pathname === '/public-webcams' || url.pathname === '/public-webcams/stream') {
+        if (url.pathname === '/osiris-cctv') {
             if (isSiteIntelRateLimited(request)) {
-                return jsonResponse({ error: 'Too many public webcam requests; wait before retrying.' }, 429, corsOrigin);
+                return jsonResponse({ error: 'Too many CCTV catalogue requests; wait before retrying.' }, 429, corsOrigin);
             }
-            if (!env.OPENWEBCAMDB_API_KEY) {
-                return jsonResponse({
-                    status: 'not_configured',
-                    error: 'Public webcam provider is not configured.',
-                    message: 'Set the OPENWEBCAMDB_API_KEY Worker secret to enable public live webcams.'
-                }, 503, corsOrigin);
+            const lat = Number(url.searchParams.get('lat'));
+            const lng = Number(url.searchParams.get('lng'));
+            const radius = Number(url.searchParams.get('radius') || 25);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+                Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+                return jsonResponse({ error: 'Valid lat and lng coordinates are required.' }, 400, corsOrigin);
             }
-            const upstreamUrl = new URL('https://openwebcamdb.com/api/v1');
-            if (url.pathname === '/public-webcams/stream') {
-                const slug = String(url.searchParams.get('slug') || '').trim();
-                if (!/^[a-z0-9][a-z0-9-]{0,179}$/i.test(slug)) {
-                    return jsonResponse({ error: 'A valid webcam slug is required.' }, 400, corsOrigin);
-                }
-                upstreamUrl.pathname += '/webcams/' + slug;
-            } else {
-                const rawBbox = String(url.searchParams.get('bbox') || '').split(',').map(Number);
-                if (rawBbox.length !== 4 || rawBbox.some(value => !Number.isFinite(value))) {
-                    return jsonResponse({ error: 'bbox must be west,south,east,north' }, 400, corsOrigin);
-                }
-                const [west, south, east, north] = rawBbox;
-                if (west < -180 || east > 180 || south < -90 || north > 90 || west >= east || south >= north) {
-                    return jsonResponse({ error: 'bbox coordinates are outside valid geographic bounds' }, 400, corsOrigin);
-                }
-                upstreamUrl.pathname += '/webcams/map';
-                upstreamUrl.searchParams.set('lat_min', String(south));
-                upstreamUrl.searchParams.set('lat_max', String(north));
-                upstreamUrl.searchParams.set('lng_min', String(west));
-                upstreamUrl.searchParams.set('lng_max', String(east));
+            if (!Number.isFinite(radius) || radius < 1 || radius > 200) {
+                return jsonResponse({ error: 'radius must be between 1 and 200 km.' }, 400, corsOrigin);
             }
+            const upstreamUrl = new URL('https://osirisai.live/api/cctv');
+            upstreamUrl.searchParams.set('lat', String(lat));
+            upstreamUrl.searchParams.set('lng', String(lng));
+            upstreamUrl.searchParams.set('radius', String(radius));
             const cacheKey = new Request(upstreamUrl.toString(), { method: 'GET' });
             try {
                 const cached = await caches.default.match(cacheKey);
@@ -1130,33 +1115,27 @@ export default {
             } catch (_) {}
             try {
                 const upstream = await fetch(upstreamUrl.toString(), {
-                    headers: {
-                        'Authorization': 'Bearer ' + env.OPENWEBCAMDB_API_KEY,
-                        'Accept': 'application/json'
-                    },
-                    signal: AbortSignal.timeout(12000)
+                    headers: { 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(25000)
                 });
                 if (!upstream.ok) {
-                    const detail = await upstream.json().catch(() => ({}));
                     return jsonResponse({
-                        error: 'OpenWebcamDB returned HTTP ' + upstream.status,
-                        message: String(detail.message || 'The webcam provider rejected the request.').slice(0, 240),
-                        retry_after: detail.retry_after || null
+                        error: 'OSIRIS CCTV API returned HTTP ' + upstream.status
                     }, upstream.status, corsOrigin);
                 }
                 const payload = await upstream.json();
                 try {
                     const cacheResponse = new Response(JSON.stringify(payload), {
-                        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
+                        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=60' }
                     });
-                    ctx && typeof ctx.waitUntil === 'function'
-                        ? ctx.waitUntil(caches.default.put(cacheKey, cacheResponse))
-                        : await caches.default.put(cacheKey, cacheResponse);
+                    const write = caches.default.put(cacheKey, cacheResponse);
+                    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(write);
+                    else await write;
                 } catch (_) {}
                 return jsonResponse(payload, 200, corsOrigin);
             } catch (error) {
                 return jsonResponse({
-                    error: 'Unable to retrieve public webcams',
+                    error: 'Unable to retrieve CCTV feeds from OSIRIS',
                     detail: String(error && error.message || error).slice(0, 180)
                 }, 502, corsOrigin);
             }
