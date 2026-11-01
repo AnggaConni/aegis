@@ -1090,6 +1090,35 @@ export default {
         if (url.pathname === '/health') {
             return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel'] }, 200, corsOrigin);
         }
+        if (url.pathname === '/public-cameras') {
+            if (isSiteIntelRateLimited(request)) {
+                return jsonResponse({ error: 'Too many camera database requests; wait a minute before retrying.' }, 429, corsOrigin);
+            }
+            const rawBbox = String(url.searchParams.get('bbox') || '').split(',').map(Number);
+            if (rawBbox.length !== 4 || rawBbox.some(value => !Number.isFinite(value))) {
+                return jsonResponse({ error: 'bbox must be west,south,east,north' }, 400, corsOrigin);
+            }
+            const [west, south, east, north] = rawBbox;
+            if (west < -180 || east > 180 || south < -90 || north > 90 || west >= east || south >= north) {
+                return jsonResponse({ error: 'bbox coordinates are outside valid geographic bounds' }, 400, corsOrigin);
+            }
+            const upstreamUrl = new URL('https://opensurveillancedb.org/api/cameras');
+            upstreamUrl.searchParams.set('bbox', [west, south, east, north].join(','));
+            upstreamUrl.searchParams.set('count', 'false');
+            try {
+                const upstream = await fetch(upstreamUrl.toString(), {
+                    headers: { 'Accept': 'application/geo+json, application/json' },
+                    signal: AbortSignal.timeout(12000)
+                });
+                if (!upstream.ok) {
+                    return jsonResponse({ error: 'OpenSurveillanceDB returned HTTP ' + upstream.status }, upstream.status, corsOrigin);
+                }
+                const payload = await upstream.json();
+                return jsonResponse(payload, 200, corsOrigin);
+            } catch (error) {
+                return jsonResponse({ error: 'Unable to retrieve public camera records', detail: String(error && error.message || error).slice(0, 180) }, 502, corsOrigin);
+            }
+        }
         if (url.pathname === '/site-intel') {
             if (isSiteIntelRateLimited(request)) {
                 return jsonResponse({ error: 'Too many Site Intelligence requests; wait a minute before retrying.' }, 429, corsOrigin);
