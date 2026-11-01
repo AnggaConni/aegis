@@ -1088,7 +1088,7 @@ export default {
         }
         if (request.method !== 'GET') return jsonResponse({ error: 'Use GET' }, 405, corsOrigin);
         if (url.pathname === '/health') {
-            return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel'] }, 200, corsOrigin);
+            return jsonResponse({ ok: true, service: 'CivilAegis TinyFish Proxy', endpoints: ['/nearby-intel', '/site-intel', '/public-cameras'] }, 200, corsOrigin);
         }
         if (url.pathname === '/public-cameras') {
             if (isSiteIntelRateLimited(request)) {
