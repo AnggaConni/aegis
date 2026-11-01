@@ -36,6 +36,7 @@ async function requestWorker(path, options = {}) {
     const response = await worker.fetch(request, {
       TINYFISH_API_KEY: options.tinyfishKey,
       OPENALEX_API_KEY: options.openAlexKey,
+      OPENWEBCAMDB_API_KEY: options.openWebcamKey,
       ALLOWED_ORIGINS: 'https://anggaconni.github.io'
     }, { waitUntil: promise => promise });
     return { response, body: await response.json(), mockError };
@@ -52,6 +53,8 @@ test('health endpoint reports the shared Worker routes', async () => {
   assert.equal(body.ok, true);
   assert.ok(body.endpoints.includes('/nearby-intel'));
   assert.ok(body.endpoints.includes('/site-intel'));
+  assert.ok(body.endpoints.includes('/public-webcams'));
+  assert.ok(body.endpoints.includes('/public-webcams/stream'));
 });
 
 test('site news route forwards a scoped query through TinyFish and normalizes results', async () => {
@@ -126,4 +129,60 @@ test('site intelligence rejects unexpected browser origins', async () => {
   const { response, body } = await requestWorker('/health', { origin: 'https://example.invalid' });
   assert.equal(response.status, 403);
   assert.equal(body.error, 'Origin not allowed');
+});
+
+
+test('public webcam map route requires a server-side API key', async () => {
+  const { response, body } = await requestWorker('/public-webcams?bbox=110,-8,111,-7');
+  assert.equal(response.status, 503);
+  assert.equal(body.status, 'not_configured');
+  assert.match(body.message, /OPENWEBCAMDB_API_KEY/);
+});
+
+test('public webcam map route proxies bounded map requests with bearer auth', async () => {
+  let called = false;
+  const { response, body } = await requestWorker('/public-webcams?bbox=110,-8,111,-7', {
+    openWebcamKey: 'test-webcam-key',
+    fetchMock: async (input, init) => {
+      called = true;
+      const url = new URL(typeof input === 'string' ? input : input.url);
+      assert.equal(url.hostname, 'openwebcamdb.com');
+      assert.equal(url.pathname, '/api/v1/webcams/map');
+      assert.equal(url.searchParams.get('lat_min'), '-8');
+      assert.equal(url.searchParams.get('lat_max'), '-7');
+      assert.equal(url.searchParams.get('lng_min'), '110');
+      assert.equal(url.searchParams.get('lng_max'), '111');
+      assert.equal(init.headers.Authorization, 'Bearer test-webcam-key');
+      return new Response(JSON.stringify({ data: [{ slug: 'harbour-view', latitude: '51.5', longitude: '-0.1' }] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(called, true);
+  assert.equal(body.data[0].slug, 'harbour-view');
+});
+
+test('public webcam stream route fetches one selected webcam detail', async () => {
+  const { response, body } = await requestWorker('/public-webcams/stream?slug=harbour-view', {
+    openWebcamKey: 'test-webcam-key',
+    fetchMock: async (input, init) => {
+      const url = new URL(typeof input === 'string' ? input : input.url);
+      assert.equal(url.pathname, '/api/v1/webcams/harbour-view');
+      assert.equal(init.headers.Authorization, 'Bearer test-webcam-key');
+      return new Response(JSON.stringify({ data: { slug: 'harbour-view', stream_type: 'hls', stream_url: 'https://streams.example/live.m3u8' } }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.stream_type, 'hls');
+});
+
+test('public webcam stream route rejects unsafe slugs', async () => {
+  const { response, body } = await requestWorker('/public-webcams/stream?slug=../secrets', {
+    openWebcamKey: 'test-webcam-key'
+  });
+  assert.equal(response.status, 400);
+  assert.match(body.error, /slug/);
 });
